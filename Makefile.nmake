@@ -1,7 +1,8 @@
-# Makefile.nmake — build the spiral CA (MSVC via nmake)
+# Makefile.nmake — build the integrated sinc+spiral+wavefront CA (MSVC via nmake)
 #
 # Usage:
-#   nmake /f Makefile.nmake          # build spiral.exe
+#   nmake /f Makefile.nmake          # build integrated.exe
+#   nmake /f Makefile.nmake test     # build headless test (no SDL)
 #   nmake /f Makefile.nmake clean    # remove artefacts
 
 CC     = cl
@@ -10,10 +11,15 @@ CFLAGS = /Ox /W3
 SDL_INC = /I"E:\vcpkg\installed\x64-windows\include"
 SDL_LIB = "E:\vcpkg\installed\x64-windows\lib\SDL3.lib"
 
-all: spiral.exe
+all: integrated.exe
 
-spiral.exe: spiral.c spiral.h
-	$(CC) $(CFLAGS) /Fe:spiral.exe spiral.c $(SDL_INC) $(SDL_LIB)
+integrated.exe: integrated.c integrated.h
+	$(CC) $(CFLAGS) /Fe:integrated.exe integrated.c $(SDL_INC) $(SDL_LIB)
+
+test: test_integrated.exe
+
+test_integrated.exe: test_integrated.c integrated.c integrated.h
+	$(CC) $(CFLAGS) /DNO_SDL /Fe:test_integrated.exe test_integrated.c integrated.c
 
 clean:
 	-del /q *.obj *.exe 2>nul
