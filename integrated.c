@@ -566,6 +566,100 @@ void render_frame(SDL_Renderer *ren) {
     }
 
     /* -------------------------------------------------------
+     * Panel 5 (top, after panel 4): spiral XY projection
+     *   All z-levels collapsed onto XY plane.
+     *   cyan = spiral, white = spin∧active, yellow circle = pulse
+     * ------------------------------------------------------- */
+    {
+        int ox = 30 + L + 20 + L + 20 + L + 20 + L + 20;
+        int oy = 10;
+        int half = L / 2;
+
+        /* dark gray sphere boundary */
+        SDL_SetRenderDrawColor(ren, 30, 30, 30, 255);
+        for (int a = 0; a < 360; a++) {
+            float rad = (float)a * 3.14159265f / 180.0f;
+            float cx = half + RADIUS * cosf(rad);
+            float cy = half + RADIUS * sinf(rad);
+            SDL_RenderPoint(ren, (float)ox + cx, (float)oy + cy);
+        }
+
+        /* dark yellow: current pulse radius */
+        {
+            unsigned int pr2 = pulse_from_time((unsigned int)tick);
+            int pr = isqrt((int)pr2);
+            SDL_SetRenderDrawColor(ren, 80, 80, 0, 255);
+            for (int a = 0; a < 360; a++) {
+                float rad = (float)a * 3.14159265f / 180.0f;
+                float cx = half + pr * cosf(rad);
+                float cy = half + pr * sinf(rad);
+                SDL_RenderPoint(ren, (float)ox + cx, (float)oy + cy);
+            }
+        }
+
+        /* axes */
+        SDL_SetRenderDrawColor(ren, 60, 0, 0, 255);  /* X red */
+        SDL_RenderLine(ren, (float)(ox + half), (float)(oy + half),
+                       (float)(ox + half + RADIUS), (float)(oy + half));
+        SDL_SetRenderDrawColor(ren, 0, 60, 0, 255);  /* Y green */
+        SDL_RenderLine(ren, (float)(ox + half), (float)(oy + half),
+                       (float)(ox + half), (float)(oy + half + RADIUS));
+
+        /* cyan: spiral points projected to XY */
+        SDL_SetRenderDrawColor(ren, 0, 200, 200, 255);
+        for (int i = 0; i < spiral_n; i++) {
+            int px = spiral_pts[i].x - MID + half;
+            int py = spiral_pts[i].y - MID + half;
+            /* 3×3 for visibility */
+            for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+                SDL_RenderPoint(ren,
+                    (float)(ox + px + dx), (float)(oy + py + dy));
+        }
+
+        /* white: AND triple points (spin ∧ active ∧ trig) */
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        for (int i = 0; i < spiral_n; i++) {
+            int sx = spiral_pts[i].x;
+            int sy = spiral_pts[i].y;
+            int sz = spiral_pts[i].z;
+            Cell *c = &grid[sx][sy][sz];
+            if (c->active && c->trig) {
+                int px = sx - MID + half;
+                int py = sy - MID + half;
+                for (int dy = -2; dy <= 2; dy++)
+                for (int dx = -2; dx <= 2; dx++)
+                    SDL_RenderPoint(ren,
+                        (float)(ox + px + dx), (float)(oy + py + dy));
+            }
+        }
+
+        /* green: spin ∧ active (AND double) — slightly smaller */
+        SDL_SetRenderDrawColor(ren, 0, 255, 0, 255);
+        for (int i = 0; i < spiral_n; i++) {
+            int sx = spiral_pts[i].x;
+            int sy = spiral_pts[i].y;
+            int sz = spiral_pts[i].z;
+            Cell *c = &grid[sx][sy][sz];
+            if (c->active && !c->trig) {
+                int px = sx - MID + half;
+                int py = sy - MID + half;
+                for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                    SDL_RenderPoint(ren,
+                        (float)(ox + px + dx), (float)(oy + py + dy));
+            }
+        }
+
+        /* cross at center */
+        SDL_SetRenderDrawColor(ren, 100, 100, 100, 255);
+        SDL_RenderLine(ren, (float)(ox + half - 3), (float)(oy + half),
+                       (float)(ox + half + 3), (float)(oy + half));
+        SDL_RenderLine(ren, (float)(ox + half), (float)(oy + half - 3),
+                       (float)(ox + half), (float)(oy + half + 3));
+    }
+
+    /* -------------------------------------------------------
      * Bottom: sinc(r) profile + AND triple scatter
      * ------------------------------------------------------- */
     {
