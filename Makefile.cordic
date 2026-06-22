@@ -1,0 +1,15 @@
+# Makefile.cordic — versão para MSVC/nmake
+
+CC     = cl
+CFLAGS = /Ox /W3
+
+SDL_INC = /I"E:\vcpkg\installed\x64-windows\include"
+SDL_LIB = "E:\vcpkg\installed\x64-windows\lib\SDL3.lib"
+
+all: cordic.exe
+
+cordic.exe: cordic.c cordic.h
+	$(CC) $(CFLAGS) /Fe:cordic.exe cordic.c $(SDL_INC) $(SDL_LIB)
+
+clean:
+	-del /q *.obj *.exe 2>nul
