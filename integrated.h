@@ -42,7 +42,7 @@
 /* =================================================================
  * Grid dimensions — change L here to scale the entire simulation
  * ================================================================= */
-#define L 221
+#define L 81
 
 #define INF_R2       0xFFFFFFFFu
 #define GRID_SPACING 8
@@ -129,6 +129,7 @@ typedef struct {
     unsigned int active;  /* 1 if on pulsating shell this tick */
     /* sinc trigger + persistence */
     unsigned char ttl;
+    unsigned char ttl_triple; /* AND triple TTL (trig ∧ active ∧ spin) */
     unsigned char trig;   /* 1 if Bresenham triggered this tick */
     /* spiral geometry (static after init) */
     unsigned char spin;   /* 1 if on the cylindrical helix */

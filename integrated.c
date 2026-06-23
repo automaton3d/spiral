@@ -266,12 +266,20 @@ void sinc_step(void) {
                 and_count[rr]++;
         }
 
+        /* AND triple: trig ∧ active ∧ spin — separate visual marker */
+        unsigned char ttl3 = grid[x][y][z].ttl_triple;
+        if ((tick & TTL_DECAY_MASK) == 0 && ttl3 > 0)
+            ttl3--;
+        if (triggered && grid[x][y][z].active && grid[x][y][z].spin)
+            ttl3 = 255;
+
         grid_next[x][y][z].u      = u_new;
         grid_next[x][y][z].v      = v_new;
         grid_next[x][y][z].acc    = acc;
         grid_next[x][y][z].sinc_p = grid[x][y][z].sinc_p;
         grid_next[x][y][z].sinc_q = grid[x][y][z].sinc_q;
         grid_next[x][y][z].ttl    = ttl;
+        grid_next[x][y][z].ttl_triple = ttl3;
         grid_next[x][y][z].trig   = (unsigned char)triggered;
     }
 
@@ -289,6 +297,7 @@ void sinc_step(void) {
         grid[x][y][z].sinc_p = grid_next[x][y][z].sinc_p;
         grid[x][y][z].sinc_q = grid_next[x][y][z].sinc_q;
         grid[x][y][z].ttl    = grid_next[x][y][z].ttl;
+        grid[x][y][z].ttl_triple = grid_next[x][y][z].ttl_triple;
         grid[x][y][z].trig   = grid_next[x][y][z].trig;
     }
 }
@@ -529,16 +538,28 @@ void render_frame(SDL_Renderer *ren) {
 
     /* -------------------------------------------------------
      * Panel 3 (top-right): TTL pattern z=MID
+     *   orange/yellow = AND double (trig∧active)
+     *   magenta       = AND triple (trig∧active∧spin)
      * ------------------------------------------------------- */
     {
         int ox = 30 + L + 20 + L + 20;
         for (int x = 0; x < L; x++)
         for (int y = 0; y < L; y++) {
             Cell *c = &grid[x][y][MID];
-            uint32_t pix_r = c->ttl;
-            uint32_t pix_g = c->ttl >> 1;
+            uint32_t pix_r, pix_g, pix_b;
+            if (c->ttl_triple > 0) {
+                /* magenta for AND triple */
+                pix_r = c->ttl_triple;
+                pix_g = 0;
+                pix_b = c->ttl_triple;
+            } else {
+                /* orange/yellow for AND double */
+                pix_r = c->ttl;
+                pix_g = c->ttl >> 1;
+                pix_b = 0;
+            }
             SDL_SetRenderDrawColor(ren,
-                (Uint8)pix_r, (Uint8)(pix_g), 0, 255);
+                (Uint8)pix_r, (Uint8)pix_g, (Uint8)pix_b, 255);
             SDL_RenderPoint(ren, (float)(x + ox), (float)(y + 10));
         }
     }
