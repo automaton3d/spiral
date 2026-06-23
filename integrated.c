@@ -823,8 +823,8 @@ void render_frame(SDL_Renderer *ren) {
                 and_double_peak = and_double_count;
             if (and_triple_count > and_triple_peak)
                 and_triple_peak = and_triple_count;
-            int d_show = and_double_peak > 0 ? and_double_peak : and_double_last;
-            int t_show = and_triple_peak > 0 ? and_triple_peak : and_triple_last;
+            int d_show = and_double_last;
+            int t_show = and_triple_last;
             printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2=%d/%d AND3=%d/%d  ",
                    tick, (long long)peak, sinc_stable_frames,
                    sinc_converged, cr, spiral_n,
