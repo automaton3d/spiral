@@ -26,7 +26,8 @@ int tick = 0;
 SpiralPt spiral_pts[MAX_SPIRAL_PTS];
 int      spiral_n = 0;
 
-int and_count[L];   /* accumulated AND triple hits per shell radius */
+int and_count[L];   /* accumulated AND double hits per shell radius */
+int and_triple_count; /* AND triple hits in current cycle */
 
 /* =================================================================
  * Spiral geometry generator (walker, init-time only)
@@ -180,6 +181,7 @@ void init(void) {
     generate_spiral();
 
     memset(and_count, 0, sizeof(and_count));
+    and_triple_count = 0;
 }
 
 /* =================================================================
@@ -270,8 +272,10 @@ void sinc_step(void) {
         unsigned char ttl3 = grid[x][y][z].ttl_triple;
         if ((tick & TTL_DECAY_MASK) == 0 && ttl3 > 0)
             ttl3--;
-        if (triggered && grid[x][y][z].active && grid[x][y][z].spin)
+        if (triggered && grid[x][y][z].active && grid[x][y][z].spin) {
             ttl3 = 255;
+            and_triple_count++;
+        }
 
         grid_next[x][y][z].u      = u_new;
         grid_next[x][y][z].v      = v_new;
@@ -790,9 +794,9 @@ void render_frame(SDL_Renderer *ren) {
             int cr = isqrt((int)pr2);
             int total_and = 0;
             for (int r = 0; r < L; r++) total_and += and_count[r];
-            printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND=%d  ",
+            printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2=%d AND3=%d  ",
                    tick, (long long)peak, sinc_stable_frames,
-                   sinc_converged, cr, spiral_n, total_and);
+                   sinc_converged, cr, spiral_n, total_and, and_triple_count);
             fflush(stdout);
         }
     }
