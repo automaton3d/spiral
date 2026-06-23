@@ -29,8 +29,10 @@ int      spiral_n = 0;
 int and_count[L];   /* accumulated AND double hits per shell radius */
 int and_double_count; /* AND double hits this tick */
 int and_double_peak;  /* max AND double per tick in current cycle */
+int and_double_last;  /* peak from previous cycle (displayed) */
 int and_triple_count; /* AND triple hits this tick */
 int and_triple_peak;  /* max AND triple per tick in current cycle */
+int and_triple_last;  /* peak from previous cycle (displayed) */
 
 /* =================================================================
  * Spiral geometry generator (walker, init-time only)
@@ -209,7 +211,9 @@ void sinc_step(void) {
         unsigned int cycle_now = ((unsigned int)tick * PULSE_STEP) / period;
         static unsigned int prev_cycle = 0;
         if (cycle_now != prev_cycle) {
-            and_double_peak = 0;  /* new cycle — reset peaks */
+            and_double_last = and_double_peak;  /* save before reset */
+            and_triple_last = and_triple_peak;
+            and_double_peak = 0;
             and_triple_peak = 0;
             prev_cycle = cycle_now;
         }
@@ -819,11 +823,13 @@ void render_frame(SDL_Renderer *ren) {
                 and_double_peak = and_double_count;
             if (and_triple_count > and_triple_peak)
                 and_triple_peak = and_triple_count;
+            int d_show = and_double_peak > 0 ? and_double_peak : and_double_last;
+            int t_show = and_triple_peak > 0 ? and_triple_peak : and_triple_last;
             printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2=%d/%d AND3=%d/%d  ",
                    tick, (long long)peak, sinc_stable_frames,
                    sinc_converged, cr, spiral_n,
-                   and_double_count, and_double_peak,
-                   and_triple_count, and_triple_peak);
+                   and_double_count, d_show,
+                   and_triple_count, t_show);
             fflush(stdout);
         }
     }
