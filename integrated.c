@@ -191,6 +191,7 @@ void init(void) {
  * ================================================================= */
 #ifndef USE_CUDA
 void sinc_step(void) {
+    and_triple_count = 0;  /* reset per tick */
     int cur_sweep_r = isqrt((int)pulse_from_time((unsigned int)tick));
 
     for (int x = 1; x < L - 1; x++)
