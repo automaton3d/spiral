@@ -1,6 +1,6 @@
 /*
- * test_scaling.c — headless test to measure AND3max vs L
- * Compile with: gcc -O2 -DNO_SDL -DL_OVERRIDE=N -o test_LN test_scaling.c integrated.c -lm
+ * test_scaling.c — headless test to measure AND3 total per cycle vs L
+ * Compile with: gcc -O2 -DNO_SDL -DL=N -o test_LN test_scaling.c integrated.c -lm
  */
 
 #define NO_SDL
@@ -9,8 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern int and_double_count, and_double_peak, and_double_last;
-extern int and_triple_count, and_triple_peak, and_triple_last;
+/* externs now in integrated.h */
 
 int main(void) {
     grid      = malloc(sizeof(Cell) * L * L * L);
@@ -56,7 +55,7 @@ int main(void) {
             unsigned int cycle_now = ((unsigned int)tick * PULSE_STEP) / period;
             if (cycle_now != prev_cycle) {
                 cycles_seen++;
-                printf("  Cycle %d ended: AND2max=%d AND3max=%d\n",
+                printf("  Cycle %d ended: AND2tot=%d AND3tot=%d\n",
                        cycles_seen, and_double_last, and_triple_last);
                 prev_cycle = cycle_now;
                 if (cycles_seen >= (int)target_cycles) break;
@@ -64,7 +63,7 @@ int main(void) {
         }
     }
 
-    printf("RESULT: L=%d spiral_n=%d AND3max_stable=%d\n\n",
+    printf("RESULT: L=%d spiral_n=%d AND3tot=%d\n\n",
            L, spiral_n, and_triple_last);
 
     free(grid);

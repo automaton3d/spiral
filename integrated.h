@@ -153,8 +153,14 @@ extern Cell (*grid)[L][L];
 extern Cell (*grid_next)[L][L];
 extern int tick;
 
-/* AND triple hit counts per shell radius */
+/* AND hit counts */
 extern int and_count[L];
+extern int and_double_count;
+extern int and_double_total;
+extern int and_double_last;
+extern int and_triple_count;
+extern int and_triple_total;
+extern int and_triple_last;
 
 /* =================================================================
  * Integer square root (bit-by-bit, no multiplication)

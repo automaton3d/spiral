@@ -28,11 +28,11 @@ int      spiral_n = 0;
 
 int and_count[L];   /* accumulated AND double hits per shell radius */
 int and_double_count; /* AND double hits this tick */
-int and_double_peak;  /* max AND double per tick in current cycle */
-int and_double_last;  /* peak from previous cycle (displayed) */
+int and_double_total; /* AND double total in current cycle */
+int and_double_last;  /* total from previous cycle (displayed) */
 int and_triple_count; /* AND triple hits this tick */
-int and_triple_peak;  /* max AND triple per tick in current cycle */
-int and_triple_last;  /* peak from previous cycle (displayed) */
+int and_triple_total; /* AND triple total in current cycle */
+int and_triple_last;  /* total from previous cycle (displayed) */
 
 /* =================================================================
  * Spiral geometry generator (walker, init-time only)
@@ -187,9 +187,9 @@ void init(void) {
 
     memset(and_count, 0, sizeof(and_count));
     and_double_count = 0;
-    and_double_peak = 0;
+    and_double_total = 0;
     and_triple_count = 0;
-    and_triple_peak = 0;
+    and_triple_total = 0;
 }
 
 /* =================================================================
@@ -211,10 +211,10 @@ void sinc_step(void) {
         unsigned int cycle_now = ((unsigned int)tick * PULSE_STEP) / period;
         static unsigned int prev_cycle = 0;
         if (cycle_now != prev_cycle) {
-            and_double_last = and_double_peak;  /* save before reset */
-            and_triple_last = and_triple_peak;
-            and_double_peak = 0;
-            and_triple_peak = 0;
+            and_double_last = and_double_total;  /* save before reset */
+            and_triple_last = and_triple_total;
+            and_double_total = 0;
+            and_triple_total = 0;
             prev_cycle = cycle_now;
         }
     }
@@ -332,11 +332,9 @@ void sinc_step(void) {
         grid[x][y][z].trig   = grid_next[x][y][z].trig;
     }
 
-    /* update peaks (works in both SDL and headless) */
-    if (and_double_count > and_double_peak)
-        and_double_peak = and_double_count;
-    if (and_triple_count > and_triple_peak)
-        and_triple_peak = and_triple_count;
+    /* accumulate cycle totals (works in both SDL and headless) */
+    and_double_total += and_double_count;
+    and_triple_total += and_triple_count;
 }
 
 /* =================================================================
@@ -835,7 +833,7 @@ void render_frame(SDL_Renderer *ren) {
         {
             unsigned int pr2 = pulse_from_time((unsigned int)tick);
             int cr = isqrt((int)pr2);
-            printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2max=%d AND3max=%d  ",
+            printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2tot=%d AND3tot=%d  ",
                    tick, (long long)peak, sinc_stable_frames,
                    sinc_converged, cr, spiral_n,
                    and_double_last, and_triple_last);
