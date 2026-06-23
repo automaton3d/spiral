@@ -1,9 +1,10 @@
 # Makefile.nmake — build the integrated sinc+spiral+wavefront CA (MSVC via nmake)
 #
 # Usage:
-#   nmake /f Makefile.nmake          # build integrated.exe
-#   nmake /f Makefile.nmake test     # build headless test (no SDL)
-#   nmake /f Makefile.nmake clean    # remove artefacts
+#   nmake /f Makefile.nmake              # build integrated.exe (SDL)
+#   nmake /f Makefile.nmake test         # build test_integrated.exe (headless)
+#   nmake /f Makefile.nmake scaling      # build test_scaling.exe (headless)
+#   nmake /f Makefile.nmake clean        # remove artefacts
 
 CC     = cl
 CFLAGS = /Ox /W3
@@ -20,6 +21,11 @@ test: test_integrated.exe
 
 test_integrated.exe: test_integrated.c integrated.c integrated.h
 	$(CC) $(CFLAGS) /DNO_SDL /Fe:test_integrated.exe test_integrated.c integrated.c
+
+scaling: test_scaling.exe
+
+test_scaling.exe: test_scaling.c integrated.c integrated.h
+	$(CC) $(CFLAGS) /DNO_SDL /Fe:test_scaling.exe test_scaling.c integrated.c
 
 clean:
 	-del /q *.obj *.exe 2>nul
