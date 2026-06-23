@@ -27,6 +27,8 @@ SpiralPt spiral_pts[MAX_SPIRAL_PTS];
 int      spiral_n = 0;
 
 int and_count[L];   /* accumulated AND double hits per shell radius */
+int and_double_count; /* AND double hits this tick */
+int and_double_peak;  /* max AND double per tick in current cycle */
 int and_triple_count; /* AND triple hits this tick */
 int and_triple_peak;  /* max AND triple per tick in current cycle */
 
@@ -182,6 +184,8 @@ void init(void) {
     generate_spiral();
 
     memset(and_count, 0, sizeof(and_count));
+    and_double_count = 0;
+    and_double_peak = 0;
     and_triple_count = 0;
     and_triple_peak = 0;
 }
@@ -193,7 +197,8 @@ void init(void) {
  * ================================================================= */
 #ifndef USE_CUDA
 void sinc_step(void) {
-    and_triple_count = 0;  /* reset per tick */
+    and_double_count = 0;  /* reset per tick */
+    and_triple_count = 0;
     int cur_sweep_r = isqrt((int)pulse_from_time((unsigned int)tick));
     /* detect new cycle using pulse period arithmetic */
     {
@@ -204,7 +209,8 @@ void sinc_step(void) {
         unsigned int cycle_now = ((unsigned int)tick * PULSE_STEP) / period;
         static unsigned int prev_cycle = 0;
         if (cycle_now != prev_cycle) {
-            and_triple_peak = 0;  /* new cycle — reset peak */
+            and_double_peak = 0;  /* new cycle — reset peaks */
+            and_triple_peak = 0;
             prev_cycle = cycle_now;
         }
     }
@@ -279,6 +285,7 @@ void sinc_step(void) {
         {
             ttl = 32 + ((223 * grid[x][y][z].sinc_p) /
                         grid[x][y][z].sinc_q);
+            and_double_count++;
             int rr = grid[x][y][z].r;
             if (rr >= 0 && rr < L && rr == cur_sweep_r)
                 and_count[rr]++;
@@ -808,13 +815,14 @@ void render_frame(SDL_Renderer *ren) {
         {
             unsigned int pr2 = pulse_from_time((unsigned int)tick);
             int cr = isqrt((int)pr2);
-            int total_and = 0;
-            for (int r = 0; r < L; r++) total_and += and_count[r];
+            if (and_double_count > and_double_peak)
+                and_double_peak = and_double_count;
             if (and_triple_count > and_triple_peak)
                 and_triple_peak = and_triple_count;
-            printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2=%d AND3=%d/%d  ",
+            printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2=%d/%d AND3=%d/%d  ",
                    tick, (long long)peak, sinc_stable_frames,
-                   sinc_converged, cr, spiral_n, total_and,
+                   sinc_converged, cr, spiral_n,
+                   and_double_count, and_double_peak,
                    and_triple_count, and_triple_peak);
             fflush(stdout);
         }
