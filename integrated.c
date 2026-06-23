@@ -256,26 +256,14 @@ void sinc_step(void) {
         if ((tick & TTL_DECAY_MASK) == 0 && ttl > 0)
             ttl--;
 
-        /* --- AND double: trig ∧ active → TTL (sinc visualization) --- */
-        if (triggered && grid[x][y][z].active) {
+        /* AND interaction: Bresenham trigger × pulsating active */
+        if (triggered && grid[x][y][z].active)
+        {
             ttl = 32 + ((223 * grid[x][y][z].sinc_p) /
                         grid[x][y][z].sinc_q);
-        }
-
-        /* --- AND triple: trig ∧ active ∧ spin (spiral detection) ---
-         * Uses strict tolerance (SPIRAL_TOLERANCE=1) for precise
-         * spiral intersection — checked directly against pulse_r2. */
-        if (triggered && grid[x][y][z].spin) {
-            unsigned int r2 = grid[x][y][z].r2;
-            if (r2 != INF_R2) {
-                unsigned int pr2 = pulse_from_time((unsigned int)tick);
-                unsigned int d = (r2 > pr2) ? (r2 - pr2) : (pr2 - r2);
-                if (d <= SPIRAL_TOLERANCE) {
-                    int rr = grid[x][y][z].r;
-                    if (rr >= 0 && rr < L && rr == cur_sweep_r)
-                        and_count[rr]++;
-                }
-            }
+            int rr = grid[x][y][z].r;
+            if (rr >= 0 && rr < L && rr == cur_sweep_r)
+                and_count[rr]++;
         }
 
         grid_next[x][y][z].u      = u_new;
