@@ -195,10 +195,15 @@ void init(void) {
 void sinc_step(void) {
     and_triple_count = 0;  /* reset per tick */
     int cur_sweep_r = isqrt((int)pulse_from_time((unsigned int)tick));
-    /* detect pulse direction reversal (contraction end) to reset peak */
+    /* detect new cycle start (expansion begins after contraction ends) */
     static int prev_sweep_r = 0;
-    if (cur_sweep_r < prev_sweep_r && prev_sweep_r > (R_MAX >> 1))
+    static int was_contracting = 0;
+    if (cur_sweep_r < prev_sweep_r)
+        was_contracting = 1;
+    if (was_contracting && cur_sweep_r > prev_sweep_r) {
         and_triple_peak = 0;  /* new cycle — reset peak */
+        was_contracting = 0;
+    }
     prev_sweep_r = cur_sweep_r;
 
     for (int x = 1; x < L - 1; x++)
