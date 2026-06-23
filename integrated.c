@@ -195,16 +195,19 @@ void init(void) {
 void sinc_step(void) {
     and_triple_count = 0;  /* reset per tick */
     int cur_sweep_r = isqrt((int)pulse_from_time((unsigned int)tick));
-    /* detect new cycle start (expansion begins after contraction ends) */
-    static int prev_sweep_r = 0;
-    static int was_contracting = 0;
-    if (cur_sweep_r < prev_sweep_r)
-        was_contracting = 1;
-    if (was_contracting && cur_sweep_r > prev_sweep_r) {
-        and_triple_peak = 0;  /* new cycle — reset peak */
-        was_contracting = 0;
+    /* detect new cycle using pulse period arithmetic */
+    {
+        const unsigned int max_r2 =
+            (unsigned int)((unsigned int)R_MAX * R_MAX * 92 / 100);
+        const unsigned int span = max_r2;
+        const unsigned int period = span + span;
+        unsigned int cycle_now = ((unsigned int)tick * PULSE_STEP) / period;
+        static unsigned int prev_cycle = 0;
+        if (cycle_now != prev_cycle) {
+            and_triple_peak = 0;  /* new cycle — reset peak */
+            prev_cycle = cycle_now;
+        }
     }
-    prev_sweep_r = cur_sweep_r;
 
     for (int x = 1; x < L - 1; x++)
     for (int y = 1; y < L - 1; y++)
