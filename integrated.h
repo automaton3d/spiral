@@ -62,7 +62,7 @@
 /* =================================================================
  * Scaled constants (L-invariant behaviour)
  * ================================================================= */
-#define PULSE_TOLERANCE  ((L * L + 150) / 300)
+#define PULSE_TOLERANCE  1
 #define SPIRAL_TOLERANCE 1
 #define PULSE_STEP       (((L) + 15) / 30)
 #define ABSORB_W         ((RADIUS / 27) > 2 ? (RADIUS / 27) : 2)
