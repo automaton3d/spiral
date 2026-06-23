@@ -42,7 +42,9 @@
 /* =================================================================
  * Grid dimensions — change L here to scale the entire simulation
  * ================================================================= */
+#ifndef L
 #define L 81
+#endif
 
 #define INF_R2       0xFFFFFFFFu
 #define GRID_SPACING 8

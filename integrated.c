@@ -331,6 +331,12 @@ void sinc_step(void) {
         grid[x][y][z].ttl_triple = grid_next[x][y][z].ttl_triple;
         grid[x][y][z].trig   = grid_next[x][y][z].trig;
     }
+
+    /* update peaks (works in both SDL and headless) */
+    if (and_double_count > and_double_peak)
+        and_double_peak = and_double_count;
+    if (and_triple_count > and_triple_peak)
+        and_triple_peak = and_triple_count;
 }
 
 /* =================================================================
@@ -409,6 +415,9 @@ void pulse_step(void) {
 }
 #endif /* !USE_CUDA */
 
+/* forward declaration */
+void check_convergence(void);
+
 /* =================================================================
  * Unified step — wavefront first, then sinc wave
  * ================================================================= */
@@ -416,22 +425,17 @@ void step_all(void) {
     pulse_step();
     sinc_step();
     tick++;
+    check_convergence();
 }
 
 /* =================================================================
- * Rendering (SDL3) — 4 panels + sinc profile graph + AND triple dots
+ * Convergence detection (shared by SDL and headless)
  * ================================================================= */
-#ifndef NO_SDL
-
-#define PEAK_HIST_W 600
-
 static int64_t profile[L];
 static int64_t prev_profile[L];
 static int     rcount[L];
-static int     peak_history[PEAK_HIST_W];
-static int     peak_idx = 0;
 static int     sinc_stable_frames = 0;
-static int     sinc_converged = 0;
+int            sinc_converged = 0;
 static int64_t u_peak = 0;
 
 static void compute_profile(void) {
@@ -465,14 +469,10 @@ static int64_t profile_max_change(void) {
     return maxd;
 }
 
-void render_frame(SDL_Renderer *ren) {
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-    SDL_RenderClear(ren);
-
+void check_convergence(void) {
     compute_profile();
     int64_t max_change = profile_max_change();
 
-    /* --- Detect sinc convergence → set rationals --- */
     if (!sinc_converged) {
         if (max_change < STABILITY_THRESHOLD) sinc_stable_frames++;
         else sinc_stable_frames = 0;
@@ -493,6 +493,22 @@ void render_frame(SDL_Renderer *ren) {
             printf("\nSinc converged at tick %d — AND triple active.\n", tick);
         }
     }
+}
+
+/* =================================================================
+ * Rendering (SDL3) — 4 panels + sinc profile graph + AND triple dots
+ * ================================================================= */
+#ifndef NO_SDL
+
+#define PEAK_HIST_W 600
+static int     peak_history[PEAK_HIST_W];
+static int     peak_idx = 0;
+
+void render_frame(SDL_Renderer *ren) {
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+    SDL_RenderClear(ren);
+
+    /* convergence already checked in step_all() */
 
     int64_t peak = 1;
     for (int r = 0; r < RADIUS; r++)
@@ -819,10 +835,6 @@ void render_frame(SDL_Renderer *ren) {
         {
             unsigned int pr2 = pulse_from_time((unsigned int)tick);
             int cr = isqrt((int)pr2);
-            if (and_double_count > and_double_peak)
-                and_double_peak = and_double_count;
-            if (and_triple_count > and_triple_peak)
-                and_triple_peak = and_triple_count;
             printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2max=%d AND3max=%d  ",
                    tick, (long long)peak, sinc_stable_frames,
                    sinc_converged, cr, spiral_n,
