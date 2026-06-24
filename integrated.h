@@ -66,7 +66,7 @@
  * ================================================================= */
 #define PULSE_TOLERANCE  1
 #define SPIRAL_TOLERANCE 1
-#define PULSE_STEP       (((L) + 15) / 30)
+#define PULSE_STEP       1
 #define ABSORB_W         ((RADIUS / 27) > 2 ? (RADIUS / 27) : 2)
 #define DIFF_DIV_SHIFT   ((RADIUS >= 384) ? 6 : (RADIUS >= 192) ? 5 : \
                           (RADIUS >=  96) ? 4 : (RADIUS >=  40) ? 3 : 2)

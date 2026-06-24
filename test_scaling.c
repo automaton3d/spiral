@@ -32,8 +32,8 @@ int main(void) {
     unsigned int target_cycles = 5;
     unsigned int max_ticks = (period / PULSE_STEP) * (target_cycles + 2) + 2000;
 
-    /* cap at reasonable limit */
-    if (max_ticks > 200000) max_ticks = 200000;
+    /* cap at reasonable limit (PULSE_STEP=1 needs longer runs) */
+    if (max_ticks > 2000000) max_ticks = 2000000;
 
     int cycles_seen = 0;
     unsigned int prev_cycle = 0;
