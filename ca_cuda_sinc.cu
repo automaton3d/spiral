@@ -1,8 +1,11 @@
 /*
- * ca_cuda.cu — CUDA kernels for the sinc + pulsating wavefront CA
+ * ca_cuda_sinc.cu — CUDA kernels for the integrated sinc + spiral + wavefront CA
  *
- * Build:
- *   nvcc -c ca_cuda.cu -o ca_cuda.o -DNO_SDL -DUSE_CUDA
+ * Build (Windows MSVC + CUDA):
+ *   nvcc -c ca_cuda_sinc.cu -o ca_cuda_sinc.obj -DNO_SDL -DUSE_CUDA
+ *
+ * Build (Linux):
+ *   nvcc -c ca_cuda_sinc.cu -o ca_cuda_sinc.o -DNO_SDL -DUSE_CUDA
  *
  * Each kernel maps one thread to one grid cell (x,y,z).
  * Block size 8x8x8 = 512 threads; grid covers L^3 cells.
@@ -14,8 +17,8 @@
 #ifndef USE_CUDA
 #define USE_CUDA
 #endif
-#include "pulsating.h"
-#include "ca_cuda.h"
+#include "integrated.h"
+#include "ca_cuda_sinc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +41,8 @@
 static Cell *d_grid      = NULL;
 static Cell *d_grid_next = NULL;
 static int  *d_and_count = NULL;
+static int  *d_and2_count = NULL;   /* per-tick AND double total */
+static int  *d_and3_count = NULL;   /* per-tick AND triple total */
 
 /* ================================================================
  * Launch configuration
@@ -50,10 +55,11 @@ static dim3 gDim() { return dim3((L+BX-1)/BX, (L+BY-1)/BY, (L+BZ-1)/BZ); }
 static dim3 bDim() { return dim3(BX, BY, BZ); }
 
 /* ================================================================
- * Sinc wave kernel — wave equation + Bresenham + TTL + AND
+ * Sinc wave kernel — wave equation + Bresenham + TTL + AND2 + AND3
  * One thread per interior cell (boundary cells skipped)
  * ================================================================ */
 __global__ void sinc_kernel(Cell *g, Cell *gn, int *and_cnt,
+                            int *and2_cnt, int *and3_cnt,
                             int tick, int cur_sweep_r)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -122,12 +128,22 @@ __global__ void sinc_kernel(Cell *g, Cell *gn, int *and_cnt,
     if ((tick & TTL_DECAY_MASK) == 0 && ttl > 0)
         ttl--;
 
-    /* AND interaction: Bresenham trigger x pulsating active */
+    /* AND double: Bresenham trigger x pulsating active */
     if (triggered && g[idx].active) {
         ttl = (unsigned char)(32 + ((223 * g[idx].sinc_p) / g[idx].sinc_q));
+        atomicAdd(and2_cnt, 1);
         int rr = g[idx].r;
         if (rr >= 0 && rr < L && rr == cur_sweep_r)
             atomicAdd(&and_cnt[rr], 1);
+    }
+
+    /* AND triple: trig ∧ active ∧ spin */
+    unsigned char ttl3 = g[idx].ttl_triple;
+    if ((tick & TTL_DECAY_MASK) == 0 && ttl3 > 0)
+        ttl3--;
+    if (triggered && g[idx].active && g[idx].spin) {
+        ttl3 = 255;
+        atomicAdd(and3_cnt, 1);
     }
 
     gn[idx].u      = u_new;
@@ -136,6 +152,7 @@ __global__ void sinc_kernel(Cell *g, Cell *gn, int *and_cnt,
     gn[idx].sinc_p = g[idx].sinc_p;
     gn[idx].sinc_q = g[idx].sinc_q;
     gn[idx].ttl    = ttl;
+    gn[idx].ttl_triple = ttl3;
     gn[idx].trig   = (unsigned char)triggered;
 }
 
@@ -157,6 +174,7 @@ __global__ void sinc_copyback_kernel(Cell *g, const Cell *gn)
     g[idx].sinc_p = gn[idx].sinc_p;
     g[idx].sinc_q = gn[idx].sinc_q;
     g[idx].ttl    = gn[idx].ttl;
+    g[idx].ttl_triple = gn[idx].ttl_triple;
     g[idx].trig   = gn[idx].trig;
 }
 
@@ -234,7 +252,7 @@ __global__ void pulse_finalize_kernel(Cell *g, const Cell *gn, int tick)
     if (new_r2 != INF_R2 && old_r2 == INF_R2)
         g[idx].r = isqrt((int)new_r2);
 
-    /* activation flags (product of pulsating CA only) */
+    /* activation flags */
     unsigned int pulse_r2 = pulse_from_time((unsigned int)tick);
     if (new_r2 == INF_R2) {
         g[idx].active = 0;
@@ -256,14 +274,18 @@ extern "C" void cuda_alloc_grids(void)
     CUDA_CHECK(cudaMalloc(&d_grid,      grid_bytes));
     CUDA_CHECK(cudaMalloc(&d_grid_next, grid_bytes));
     CUDA_CHECK(cudaMalloc(&d_and_count, sizeof(int) * L));
-    CUDA_CHECK(cudaMemset(d_and_count, 0, sizeof(int) * L));
+    CUDA_CHECK(cudaMalloc(&d_and2_count, sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_and3_count, sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_and_count,  0, sizeof(int) * L));
+    CUDA_CHECK(cudaMemset(d_and2_count, 0, sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_and3_count, 0, sizeof(int)));
 
     /* print device info */
     int dev;
     cudaGetDevice(&dev);
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, dev);
-    printf("CUDA device: %s  (%.0f MB free)\n", prop.name,
+    printf("CUDA device: %s  (%.0f MB VRAM)\n", prop.name,
            (double)prop.totalGlobalMem / (1024.0 * 1024.0));
     printf("Grid allocation: 2 x %.1f MB = %.1f MB\n",
            (double)grid_bytes / (1024.0 * 1024.0),
@@ -288,6 +310,7 @@ extern "C" void cuda_sinc_step(int tick)
 {
     int cur_sweep_r = isqrt((int)pulse_from_time((unsigned int)tick));
     sinc_kernel<<<gDim(), bDim()>>>(d_grid, d_grid_next, d_and_count,
+                                    d_and2_count, d_and3_count,
                                     tick, cur_sweep_r);
     sinc_copyback_kernel<<<gDim(), bDim()>>>(d_grid, d_grid_next);
 }
@@ -306,6 +329,18 @@ extern "C" void cuda_download_and_count(int *h_and_count, int n)
                           cudaMemcpyDeviceToHost));
 }
 
+extern "C" void cuda_download_and_counters(int *h_and2, int *h_and3)
+{
+    CUDA_CHECK(cudaMemcpy(h_and2, d_and2_count, sizeof(int), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_and3, d_and3_count, sizeof(int), cudaMemcpyDeviceToHost));
+}
+
+extern "C" void cuda_reset_and_counters(void)
+{
+    CUDA_CHECK(cudaMemset(d_and2_count, 0, sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_and3_count, 0, sizeof(int)));
+}
+
 extern "C" void cuda_upload_grid_full(void *h_grid)
 {
     CUDA_CHECK(cudaMemcpy(d_grid, h_grid,
@@ -318,7 +353,11 @@ extern "C" void cuda_free(void)
     cudaFree(d_grid);
     cudaFree(d_grid_next);
     cudaFree(d_and_count);
-    d_grid      = NULL;
-    d_grid_next = NULL;
-    d_and_count = NULL;
+    cudaFree(d_and2_count);
+    cudaFree(d_and3_count);
+    d_grid       = NULL;
+    d_grid_next  = NULL;
+    d_and_count  = NULL;
+    d_and2_count = NULL;
+    d_and3_count = NULL;
 }

@@ -204,9 +204,11 @@ SINLINE HD unsigned int pulse_from_time(unsigned int t) {
  * Public API
  * ================================================================= */
 void init(void);
-void step_all(void);
+void check_convergence(void);
+extern int sinc_converged;
 
 #ifndef USE_CUDA
+void step_all(void);
 void sinc_step(void);
 void pulse_step(void);
 #endif

@@ -418,13 +418,16 @@ void check_convergence(void);
 
 /* =================================================================
  * Unified step — wavefront first, then sinc wave
+ * (not used when USE_CUDA is defined; the CUDA driver calls kernels directly)
  * ================================================================= */
+#ifndef USE_CUDA
 void step_all(void) {
     pulse_step();
     sinc_step();
     tick++;
     check_convergence();
 }
+#endif
 
 /* =================================================================
  * Convergence detection (shared by SDL and headless)
