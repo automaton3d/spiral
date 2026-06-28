@@ -15,7 +15,7 @@ SDL_LIB = "E:\vcpkg\installed\x64-windows\lib\SDL3.lib"
 
 # CUDA paths (adjust if your CUDA Toolkit is elsewhere)
 NVCC     = nvcc
-CUDA_LIB = cudart.lib
+CUDA_LIB = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\lib\x64\cudart.lib"
 
 all: integrated.exe
 
