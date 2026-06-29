@@ -5,6 +5,7 @@
 #   nmake /f Makefile.nmake test         # build test_integrated.exe (headless)
 #   nmake /f Makefile.nmake scaling      # build test_scaling.exe (headless)
 #   nmake /f Makefile.nmake cuda         # build test_cuda.exe (headless, GPU)
+#   nmake /f Makefile.nmake rotation     # build ac_rotation.exe (headless)
 #   nmake /f Makefile.nmake clean        # remove artefacts
 
 CC     = cl
@@ -39,6 +40,11 @@ ca_cuda_sinc.obj: ca_cuda_sinc.cu integrated.h ca_cuda_sinc.h
 
 test_cuda.exe: test_scaling_cuda.c integrated.c integrated.h ca_cuda_sinc.obj
 	$(CC) $(CFLAGS) /DNO_SDL /DUSE_CUDA /Fe:test_cuda.exe test_scaling_cuda.c integrated.c ca_cuda_sinc.obj $(CUDA_LIB)
+
+rotation: ac_rotation.exe
+
+ac_rotation.exe: ac_rotation.c
+	$(CC) $(CFLAGS) /Fe:ac_rotation.exe ac_rotation.c
 
 clean:
 	-del /q *.obj *.exe 2>nul
