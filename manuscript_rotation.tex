@@ -200,9 +200,13 @@ Total ticks per rotation: $3\times(L/2 + L/2) = 3L$.
 \section{Results}
 \label{sec:results}
 
-All experiments use a centred cube of side $L/2$ with a small
-asymmetric flag (3 cells protruding in $+x$) as a fiducial marker.
-The rotation angle is $\theta=30^\circ$, specified by $(p,q)=(1,2)$.
+The algorithm is fully generic: it rotates \emph{any} configuration
+of active cells, regardless of shape or topology.  For the
+experiments below we use a centred cube of side~$L/2$ with a small
+asymmetric flag (3~cells protruding in~$+x$) as a fiducial marker,
+chosen solely because its sharp corners make geometric distortions
+easy to detect.  The rotation angle is $\theta=30^\circ$, specified
+by $(p,q)=(1,2)$.
 
 \subsection{Bit conservation}
 
@@ -223,8 +227,9 @@ $L$ & Cells before & Cells after & Preserved \\
 
 The three-shear decomposition is a composition of bijective
 permutations (integer translations within each row/column), so the
-total number of active cells is preserved \emph{exactly} for any angle
-and any~$L$.
+total number of active cells is preserved \emph{exactly} for any
+angle, any~$L$, and any initial configuration---the result does not
+depend on the shape of the object being rotated.
 
 \subsection{Convergence of the tangent approximation}
 
