@@ -34,6 +34,13 @@ int and_triple_count; /* AND triple hits this tick */
 int and_triple_total; /* AND triple total in current cycle */
 int and_triple_last;  /* total from previous cycle (displayed) */
 
+/* Pulsating wavefront state (sum-of-odds rule) */
+unsigned int pulse_r2_state = 0;
+int          pulse_r_state  = 0;
+int          pulse_gap      = 1;   /* next odd = 2*pulse_r_state + 1 */
+unsigned int pulse_r_sq     = 0;   /* pulse_r_state² */
+int          pulse_expanding = 1;
+
 /* =================================================================
  * Spiral geometry generator (walker, init-time only)
  *
@@ -190,6 +197,13 @@ void init(void) {
     and_double_total = 0;
     and_triple_count = 0;
     and_triple_total = 0;
+
+    /* reset pulsating sweep state */
+    pulse_r2_state = 0;
+    pulse_r_state  = 0;
+    pulse_gap      = 1;
+    pulse_r_sq     = 0;
+    pulse_expanding = 1;
 }
 
 /* =================================================================
@@ -201,7 +215,7 @@ void init(void) {
 void sinc_step(void) {
     and_double_count = 0;  /* reset per tick */
     and_triple_count = 0;
-    int cur_sweep_r = isqrt((int)pulse_from_time((unsigned int)tick));
+    int cur_sweep_r = pulse_r_state;
     /* detect new cycle using pulse period arithmetic */
     {
         const unsigned int max_r2 =
@@ -382,6 +396,44 @@ static void pulse_update_wavefront(void) {
     }
 }
 
+/* =================================================================
+ * pulse_advance — sum-of-odds update for pulse_r alongside pulse_r2
+ *
+ * Operations per tick: 1 addition + 1 comparison + (rarely) 3 adds.
+ * No isqrt, no multiplication, no division.
+ * ================================================================= */
+void pulse_advance(void) {
+    const unsigned int max_r2 =
+        (unsigned int)((unsigned int)R_MAX * R_MAX * 92 / 100);
+
+    if (pulse_expanding) {
+        pulse_r2_state += PULSE_STEP;
+        if (pulse_r2_state >= max_r2) {
+            pulse_r2_state = max_r2;
+            pulse_expanding = 0;
+        }
+        /* crossed a perfect square? advance r */
+        while (pulse_r2_state >= pulse_r_sq + (unsigned int)pulse_gap) {
+            pulse_r_sq += (unsigned int)pulse_gap;
+            pulse_r_state++;
+            pulse_gap += 2;
+        }
+    } else {
+        if (pulse_r2_state < (unsigned int)PULSE_STEP) {
+            pulse_r2_state = 0;
+            pulse_expanding = 1;
+        } else {
+            pulse_r2_state -= PULSE_STEP;
+        }
+        /* dropped below current perfect square? retreat r */
+        while (pulse_r_state > 0 && pulse_r2_state < pulse_r_sq) {
+            pulse_r_state--;
+            pulse_gap -= 2;
+            pulse_r_sq -= (unsigned int)pulse_gap;
+        }
+    }
+}
+
 void pulse_step(void) {
     pulse_update_wavefront();
     grid_next[MID][MID][MID].r2 = 0;
@@ -392,11 +444,18 @@ void pulse_step(void) {
         unsigned int old_r2 = grid[x][y][z].r2;
         unsigned int new_r2 = grid_next[x][y][z].r2;
         grid[x][y][z].r2 = new_r2;
-        if (new_r2 != INF_R2 && old_r2 == INF_R2)
-            grid[x][y][z].r = isqrt((int)new_r2);
+        if (new_r2 != INF_R2 && old_r2 == INF_R2) {
+            /* r = floor(sqrt(r2)) via sum-of-odds: no isqrt */
+            int r = 0;
+            unsigned int sq = 0, g = 1;
+            while (sq + g <= new_r2) { sq += g; r++; g += 2; }
+            grid[x][y][z].r = r;
+        }
     }
 
-    unsigned int pulse_r2 = pulse_from_time((unsigned int)tick);
+    /* advance pulsating sweep (sum-of-odds, no isqrt) */
+    pulse_advance();
+
     for (int x = 0; x < L; x++)
     for (int y = 0; y < L; y++)
     for (int z = 0; z < L; z++) {
@@ -404,9 +463,9 @@ void pulse_step(void) {
         if (r2 == INF_R2) {
             grid[x][y][z].active = 0;
         } else {
-            unsigned int delta = (r2 > pulse_r2)
-                               ? (r2 - pulse_r2)
-                               : (pulse_r2 - r2);
+            unsigned int delta = (r2 > pulse_r2_state)
+                               ? (r2 - pulse_r2_state)
+                               : (pulse_r2_state - r2);
             grid[x][y][z].active = (delta <= PULSE_TOLERANCE) ? 1 : 0;
         }
     }
@@ -545,7 +604,7 @@ void render_frame(SDL_Renderer *ren) {
      * ------------------------------------------------------- */
     {
         int ox = 30 + L + 20;
-        unsigned int pulse_thr = pulse_from_time((unsigned int)tick);
+        unsigned int pulse_thr = pulse_r2_state;
 
         for (int x = 0; x < L; x++)
         for (int y = 0; y < L; y++) {
@@ -554,7 +613,7 @@ void render_frame(SDL_Renderer *ren) {
 
             /* wavefront distance (green gradient) */
             if (c->r2 != INF_R2) {
-                int rr = isqrt((int)c->r2);
+                int rr = c->r;
                 int g = (rr < RADIUS) ? 255 - (rr * 255 / RADIUS) : 0;
                 pix_g = (uint32_t)g;
             }
@@ -656,8 +715,8 @@ void render_frame(SDL_Renderer *ren) {
 
         /* dark yellow: current pulse radius */
         {
-            unsigned int pr2 = pulse_from_time((unsigned int)tick);
-            int pr = isqrt((int)pr2);
+            unsigned int pr2 = pulse_r2_state;
+            int pr = pulse_r_state;
             SDL_SetRenderDrawColor(ren, 80, 80, 0, 255);
             for (int a = 0; a < 360; a++) {
                 float rad = (float)a * 3.14159265f / 180.0f;
@@ -802,8 +861,8 @@ void render_frame(SDL_Renderer *ren) {
 
         /* dark gray: current pulse radius */
         {
-            unsigned int pr2 = pulse_from_time((unsigned int)tick);
-            int cur_r = isqrt((int)pr2);
+            unsigned int pr2 = pulse_r2_state;
+            int cur_r = pulse_r_state;
             if (cur_r < RADIUS) {
                 int cx = px0 + cur_r * GRAPH_SCALE_X;
                 SDL_SetRenderDrawColor(ren, 60, 60, 60, 255);
@@ -834,11 +893,9 @@ void render_frame(SDL_Renderer *ren) {
 
         /* status */
         {
-            unsigned int pr2 = pulse_from_time((unsigned int)tick);
-            int cr = isqrt((int)pr2);
             printf("\r[tick %4d] peak=%lld stable=%d conv=%d r=%d spiral=%d AND2tot=%d AND3tot=%d  ",
                    tick, (long long)peak, sinc_stable_frames,
-                   sinc_converged, cr, spiral_n,
+                   sinc_converged, pulse_r_state, spiral_n,
                    and_double_last, and_triple_last);
             fflush(stdout);
         }

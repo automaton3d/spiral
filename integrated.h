@@ -162,6 +162,13 @@ extern int and_triple_count;
 extern int and_triple_total;
 extern int and_triple_last;
 
+/* Pulsating wavefront state (sum-of-odds, no isqrt) */
+extern unsigned int pulse_r2_state;  /* current r² position */
+extern int          pulse_r_state;   /* floor(sqrt(pulse_r2_state)) */
+extern int          pulse_gap;       /* 2*pulse_r_state + 1 */
+extern unsigned int pulse_r_sq;      /* pulse_r_state² */
+extern int          pulse_expanding; /* 1 = expanding, 0 = contracting */
+
 /* =================================================================
  * Integer square root (bit-by-bit, no multiplication)
  * ================================================================= */
@@ -183,22 +190,15 @@ SINLINE HD int isqrt(int n) {
 }
 
 /* =================================================================
- * Pulsating sweep: triangular wave in r2 space
+ * Pulsating sweep: advance pulse_r2 and pulse_r by one tick.
+ *
+ * pulse_r = floor(sqrt(pulse_r2)) is maintained by the
+ * sum-of-odds identity: the gaps between consecutive perfect
+ * squares are 1, 3, 5, 7, ... = (2r+1).  Each tick we advance
+ * pulse_r2 by PULSE_STEP and adjust pulse_r using only
+ * addition, subtraction, and comparison — no isqrt.
  * ================================================================= */
-SINLINE HD unsigned int pulse_from_time(unsigned int t) {
-    const unsigned int min_r2 = 0;
-    const unsigned int max_r2 =
-        (unsigned int)((unsigned int)R_MAX * R_MAX * 92 / 100);
-    const unsigned int step = PULSE_STEP;
-    unsigned int span = max_r2 - min_r2;
-    if (span == 0) return min_r2;
-    unsigned int period = span + span;
-    unsigned int phase  = (t * step) % period;
-    if (phase < span)
-        return min_r2 + phase;
-    else
-        return max_r2 - (phase - span);
-}
+void pulse_advance(void);
 
 /* =================================================================
  * Public API
