@@ -34,17 +34,17 @@ typedef unsigned char Cell;
 /* ------------------------------------------------------------------ */
 /*  Integer square root (Bresenham-style, no multiply in the loop)    */
 /* ------------------------------------------------------------------ */
-static int isqrt_int(int n)
+static int isqrt_int(long long n)
 {
     if (n <= 0) return 0;
-    int r = 0, bit = 1 << 30;
+    long long r = 0, bit = 1LL << 60;
     while (bit > n) bit >>= 2;
     while (bit) {
         if (n >= r + bit) { n -= r + bit; r = (r >> 1) + bit; }
         else              { r >>= 1; }
         bit >>= 2;
     }
-    return r;
+    return (int)r;
 }
 
 /* ------------------------------------------------------------------ */
@@ -121,21 +121,33 @@ void rotate_z(Cell *grid, int sin_p, int sin_q)
 {
     int center = MID;
 
-    /* tan(θ/2) = sin_p / (sin_q + cos_num) */
-    int cos_num = isqrt_int(sin_q * sin_q - sin_p * sin_p);
-    int tan_p = sin_p;
-    int tan_q = sin_q + cos_num;
+    /*
+     * Scale (sin_p, sin_q) by L for isqrt precision.
+     * isqrt error is ≤ 1, so relative error ≈ 1/(sin_q·L) → 0 as L→∞.
+     * The Bresenham ratio is preserved: (p·L)/(q·L) = p/q.
+     */
+    long long sp = (long long)sin_p * L;
+    long long sq = (long long)sin_q * L;
+
+    int cos_num = isqrt_int(sq * sq - sp * sp);
+    int tan_p = (int)sp;
+    int tan_q = (int)sq + cos_num;
+
+    /* sin shear also uses scaled pair */
+    int sin_p_s = (int)sp;
+    int sin_q_s = (int)sq;
 
     int *shifts = (int *)malloc(L * sizeof(int));
 
-    printf("  Rotation: sin=%d/%d  tan_half=%d/%d\n", sin_p, sin_q, tan_p, tan_q);
+    printf("  Rotation: sin=%d/%d (scaled %d/%d)  tan_half=%d/%d\n",
+           sin_p, sin_q, sin_p_s, sin_q_s, tan_p, tan_q);
 
     /* Shear 1: x by -tan(θ/2) · dy */
     compute_shifts(shifts, tan_p, tan_q, center, -1);
     shear_x(grid, shifts);
 
     /* Shear 2: y by +sin(θ) · dx */
-    compute_shifts(shifts, sin_p, sin_q, center, +1);
+    compute_shifts(shifts, sin_p_s, sin_q_s, center, +1);
     shear_y(grid, shifts);
 
     /* Shear 3: x by -tan(θ/2) · dy  (same as shear 1) */
