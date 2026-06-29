@@ -226,7 +226,13 @@ int main(int argc, char **argv)
            bits_after - bits_before);
 
     save_dat(grid, "after_rotation.dat");
+    printf("Output: before_rotation.dat, after_rotation.dat\n");
 
     free(grid);
+
+#ifdef _WIN32
+    printf("\nPressione Enter para sair...\n");
+    getchar();
+#endif
     return 0;
 }
