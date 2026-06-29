@@ -2,7 +2,7 @@
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage[english]{babel}
+\usepackage[american]{babel}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
 \usepackage{graphicx}
@@ -12,7 +12,7 @@
 \usepackage[margin=2.5cm]{geometry}
 
 \title{Integer-Only 3D Rotation via Paeth Decomposition\\with Bresenham Accumulators}
-\author{A.\ Bessa}
+\author{A.~F.~Neto}
 \date{\today}
 
 \begin{document}
@@ -26,7 +26,7 @@ addition, subtraction, comparison, and bit-shift.  The angle is
 specified by a pair of integers $(p,q)$ satisfying
 $\sin\theta = p/q$.  The method decomposes the rotation into three
 shear operations (Paeth decomposition), each executed by a Bresenham
-accumulator that propagates from the grid centre outward---replacing
+accumulator that propagates from the grid center outward---replacing
 all multiplications with cumulative additions.  We prove that (i)~the
 mapping is bijective, preserving the number of active cells exactly,
 and (ii)~the residual shear artifact vanishes as $O(1/L)$ when the
@@ -56,7 +56,7 @@ compatible with CA constraints.
 
 The main contributions are:
 \begin{enumerate}
-\item A complete integer-only rotation algorithm parameterised by
+\item A complete integer-only rotation algorithm parameterized by
       a single pair $(p,q)$, with no floating-point arithmetic
       anywhere in the pipeline.
 \item An $L$-scaling technique that makes the angular precision of
@@ -86,7 +86,7 @@ where $s = \sin\theta$ and $t = \tan(\theta/2)$.  Since the
 rotation is around~$z$, each $z$-slice is rotated independently;
 the third coordinate is inert.
 
-\subsection{Integer parameterisation}
+\subsection{Integer parameterization}
 
 The angle is specified by the pair $(p,q)$ with
 $\sin\theta = p/q$, \ $0 < p \le q$.  From this we derive:
@@ -130,7 +130,7 @@ whose integer square root has absolute error $\le 1$ and
 
 Each shear requires shifting row~$y$ (or column~$x$) by
 $\lfloor d\cdot t_p/t_q \rfloor$ cells, where $d=|y - L/2|$ is the
-distance from the grid centre.  Rather than multiplying, we propagate
+distance from the grid center.  Rather than multiplying, we propagate
 a Bresenham accumulator from $d=0$ outward:
 
 \begin{algorithm}[H]
@@ -138,16 +138,16 @@ a Bresenham accumulator from $d=0$ outward:
 \label{alg:bres}
 \begin{algorithmic}[1]
 \State $\mathrm{acc} \gets 0$; \; $\mathrm{total} \gets 0$;
-  \; $\mathrm{shifts}[\mathrm{centre}] \gets 0$
+  \; $\mathrm{shifts}[\mathrm{center}] \gets 0$
 \For{$d = 1, 2, \ldots, L-1$}
   \State $\mathrm{acc} \gets \mathrm{acc} + t_p$
   \While{$\mathrm{acc} \ge t_q$}
     \State $\mathrm{acc} \gets \mathrm{acc} - t_q$
     \State $\mathrm{total} \gets \mathrm{total} + 1$
   \EndWhile
-  \State $\mathrm{shifts}[\mathrm{centre}+d] \gets
+  \State $\mathrm{shifts}[\mathrm{center}+d] \gets
          +\sigma\cdot\mathrm{total}$
-  \State $\mathrm{shifts}[\mathrm{centre}-d] \gets
+  \State $\mathrm{shifts}[\mathrm{center}-d] \gets
          -\sigma\cdot\mathrm{total}$
 \EndFor
 \end{algorithmic}
@@ -157,7 +157,7 @@ a Bresenham accumulator from $d=0$ outward:
 Here $\sigma = \pm1$ encodes the shear direction.  The only
 operations are addition, subtraction, and comparison.  The loop body
 maps directly to a wavefront propagation rule in a CA: cell at
-distance~$d$ reads its neighbour at distance~$d-1$ and applies one
+distance~$d$ reads its neighbor at distance~$d-1$ and applies one
 Bresenham step.
 
 \subsection{Shear execution}
@@ -184,15 +184,15 @@ The full rotation consists of three sequential shears:
 Each shear decomposes into two CA phases:
 \begin{description}
 \item[Propagation phase ($L/2$ ticks):]
-  A Bresenham wavefront propagates from the centre row (or column)
+  A Bresenham wavefront propagates from the center row (or column)
   outward, one cell per tick.  Each cell reads its inward
-  neighbour's accumulator and applies a single add-compare step.
+  neighbor's accumulator and applies a single add-compare step.
   This is structurally identical to the BFS wavefront in our
-  pulsating-shell CA~\cite{bessa2025sinc}.
+  pulsating-shell CA~\cite{neto2026arithmetico}.
 \item[Shift phase ($\le L/2$ ticks):]
   All rows shift their content simultaneously, one cell per tick.
   Each cell with $\mathrm{shift\_remaining} > 0$ copies from its
-  lateral neighbour and decrements.  Rows that finish early are inert.
+  lateral neighbor and decrements.  Rows that finish early are inert.
 \end{description}
 Total ticks per rotation: $3\times(L/2 + L/2) = 3L$.
 
@@ -202,7 +202,7 @@ Total ticks per rotation: $3\times(L/2 + L/2) = 3L$.
 
 The algorithm is fully generic: it rotates \emph{any} configuration
 of active cells, regardless of shape or topology.  For the
-experiments below we use a centred cube of side~$L/2$ with a small
+experiments below we use a centered cube of side~$L/2$ with a small
 asymmetric flag (3~cells protruding in~$+x$) as a fiducial marker,
 chosen solely because its sharp corners make geometric distortions
 easy to detect.  The rotation angle is $\theta=30^\circ$, specified
@@ -322,10 +322,10 @@ automaton framework:
   The Bresenham accumulator replaces $d \times t_p / t_q$ with
   $d$~iterations of add-compare.  The $\mathrm{isqrt}$ uses only
   add, subtract, compare, and right-shift.
-\item \textbf{Local neighbourhood.}
-  During the propagation phase, each cell reads one neighbour
-  (toward the centre) for the accumulator.  During the shift phase,
-  each cell reads one lateral neighbour for the content.
+\item \textbf{Local neighborhood.}
+  During the propagation phase, each cell reads one neighbor
+  (toward the center) for the accumulator.  During the shift phase,
+  each cell reads one lateral neighbor for the content.
 \item \textbf{Deterministic and reversible.}
   Each shear is a bijection.  The inverse rotation uses the same
   three shears in reverse order with negated slopes.
@@ -373,12 +373,18 @@ T.~Toffoli and N.~Margolus,
 \emph{Cellular Automata Machines: A New Environment for Modeling},
 MIT Press, 1987.
 
-\bibitem{bessa2025sinc}
-A.~Bessa,
-``Integer sinc-wave cellular automaton with pulsating wavefront
-and cylindrical helix,''
-unpublished manuscript, 2025.
+\bibitem{neto2026arithmetico}
+A.~F.~Neto,
+``Exact Euclidean squared distance reconstruction by local integer
+propagation,''
+\emph{ResearchGate preprint}, 2026.
 
 \end{thebibliography}
+
+\section*{Funding and competing interests}
+
+The author declares that no funds, grants, or other support were received
+during the preparation of this manuscript.
+The author has no relevant financial or non-financial interests to disclose.
 
 \end{document}
