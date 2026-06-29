@@ -6,6 +6,7 @@
 #   nmake /f Makefile.nmake scaling      # build test_scaling.exe (headless)
 #   nmake /f Makefile.nmake cuda         # build test_cuda.exe (headless, GPU)
 #   nmake /f Makefile.nmake rotation     # build ac_rotation.exe (headless)
+#   nmake /f Makefile.nmake pulser       # build test_pulse_r.exe (verify sum-of-odds)
 #   nmake /f Makefile.nmake clean        # remove artefacts
 
 CC     = cl
@@ -45,6 +46,11 @@ rotation: ac_rotation.exe
 
 ac_rotation.exe: ac_rotation.c
 	$(CC) $(CFLAGS) /Fe:ac_rotation.exe ac_rotation.c
+
+pulser: test_pulse_r.exe
+
+test_pulse_r.exe: test_pulse_r.c integrated.c integrated.h
+	$(CC) $(CFLAGS) /DNO_SDL /Fe:test_pulse_r.exe test_pulse_r.c integrated.c
 
 clean:
 	-del /q *.obj *.exe 2>nul
