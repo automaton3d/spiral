@@ -1,0 +1,379 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage[margin=2.5cm]{geometry}
+
+\title{Integer-Only 3D Rotation via Paeth Decomposition\\with Bresenham Accumulators}
+\author{A.\ Bessa}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a cellular automaton (CA) capable of rotating the contents
+of a three-dimensional cubic lattice of side~$L$ by an arbitrary angle
+$\theta$ around the $z$-axis using exclusively integer arithmetic:
+addition, subtraction, comparison, and bit-shift.  The angle is
+specified by a pair of integers $(p,q)$ satisfying
+$\sin\theta = p/q$.  The method decomposes the rotation into three
+shear operations (Paeth decomposition), each executed by a Bresenham
+accumulator that propagates from the grid centre outward---replacing
+all multiplications with cumulative additions.  We prove that (i)~the
+mapping is bijective, preserving the number of active cells exactly,
+and (ii)~the residual shear artifact vanishes as $O(1/L)$ when the
+pair $(p,q)$ is scaled by~$L$, so the result converges to the ideal
+rotation in the continuum limit.  Numerical experiments for
+$L\in\{128,256,512\}$ confirm both properties.
+\end{abstract}
+
+% ==================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Discrete rotations on integer lattices arise naturally in cellular
+automaton models of physics, where all state variables must be
+representable as integers and the update rule may use only
+addition, subtraction, comparison, and bit-shift---excluding
+multiplication and division at the cell level~\cite{toffoli1987}.
+
+The standard approach to integer-grid rotation is the
+\emph{three-shear decomposition} introduced by
+Paeth~\cite{paeth1986}: every 2D rotation can be written as the
+composition of three axis-aligned shears, each of which is a
+bijection on integer coordinates.  We extend this to 3D (rotation
+around a fixed axis) and replace the per-row multiplication with a
+Bresenham-style accumulator, yielding a procedure that is
+compatible with CA constraints.
+
+The main contributions are:
+\begin{enumerate}
+\item A complete integer-only rotation algorithm parameterised by
+      a single pair $(p,q)$, with no floating-point arithmetic
+      anywhere in the pipeline.
+\item An $L$-scaling technique that makes the angular precision of
+      the \texttt{isqrt} (integer square root) co-scale with the
+      grid resolution, guaranteeing convergence to the exact
+      rotation.
+\item Numerical verification of bit-conservation and convergence
+      for grids up to $L=512$ ($\approx1.3\times10^8$ cells).
+\end{enumerate}
+
+% ==================================================================
+\section{Mathematical Framework}
+\label{sec:math}
+
+\subsection{Paeth three-shear decomposition}
+
+A counter-clockwise rotation by angle $\theta$ in the $(x,y)$ plane
+can be factored as
+\begin{equation}
+\label{eq:paeth}
+R(\theta)
+= \underbrace{\begin{pmatrix}1 & -t\\0 & 1\end{pmatrix}}_{S_x(-t)}
+  \underbrace{\begin{pmatrix}1 & 0\\s & 1\end{pmatrix}}_{S_y(s)}
+  \underbrace{\begin{pmatrix}1 & -t\\0 & 1\end{pmatrix}}_{S_x(-t)},
+\end{equation}
+where $s = \sin\theta$ and $t = \tan(\theta/2)$.  Since the
+rotation is around~$z$, each $z$-slice is rotated independently;
+the third coordinate is inert.
+
+\subsection{Integer parameterisation}
+
+The angle is specified by the pair $(p,q)$ with
+$\sin\theta = p/q$, \ $0 < p \le q$.  From this we derive:
+\begin{align}
+\cos\theta &\approx \frac{\mathrm{isqrt}(q^2 - p^2)}{q},
+\label{eq:cos}\\[4pt]
+\tan\!\tfrac{\theta}{2}
+  &= \frac{\sin\theta}{1+\cos\theta}
+   = \frac{p}{q + \mathrm{isqrt}(q^2 - p^2)}
+   \;\equiv\; \frac{t_p}{t_q},
+\label{eq:tan}
+\end{align}
+where $\mathrm{isqrt}(n) = \lfloor\sqrt{n}\rfloor$ is computed by
+the classical bit-by-bit algorithm using only addition, subtraction,
+comparison, and right-shift.
+
+\subsection{$L$-scaling for precision}
+\label{sec:scaling}
+
+For small $(p,q)$ the truncation $\mathrm{isqrt}(q^2-p^2)$ can be
+far from $\sqrt{q^2-p^2}$.  For example, $(p,q)=(1,2)$ gives
+$\mathrm{isqrt}(3)=1$ versus $\sqrt{3}\approx1.732$, introducing a
+24\% error in $\tan(\theta/2)$.
+
+We eliminate this by scaling: before computing~\eqref{eq:tan}, replace
+$(p,q)$ with $(pL,\,qL)$.  The sine ratio is unchanged
+($pL/qL = p/q$), but the isqrt argument becomes $L^2(q^2-p^2)$,
+whose integer square root has absolute error $\le 1$ and
+\emph{relative} error $\le 1/(L\sqrt{q^2-p^2})$.  Thus
+\begin{equation}
+\label{eq:tanerr}
+\left|\frac{t_p}{t_q} - \tan\!\tfrac{\theta}{2}\right|
+= O\!\left(\frac{1}{L}\right).
+\end{equation}
+
+% ==================================================================
+\section{Algorithm}
+\label{sec:algo}
+
+\subsection{Bresenham shift computation}
+
+Each shear requires shifting row~$y$ (or column~$x$) by
+$\lfloor d\cdot t_p/t_q \rfloor$ cells, where $d=|y - L/2|$ is the
+distance from the grid centre.  Rather than multiplying, we propagate
+a Bresenham accumulator from $d=0$ outward:
+
+\begin{algorithm}[H]
+\caption{Compute cumulative shifts via Bresenham}
+\label{alg:bres}
+\begin{algorithmic}[1]
+\State $\mathrm{acc} \gets 0$; \; $\mathrm{total} \gets 0$;
+  \; $\mathrm{shifts}[\mathrm{centre}] \gets 0$
+\For{$d = 1, 2, \ldots, L-1$}
+  \State $\mathrm{acc} \gets \mathrm{acc} + t_p$
+  \While{$\mathrm{acc} \ge t_q$}
+    \State $\mathrm{acc} \gets \mathrm{acc} - t_q$
+    \State $\mathrm{total} \gets \mathrm{total} + 1$
+  \EndWhile
+  \State $\mathrm{shifts}[\mathrm{centre}+d] \gets
+         +\sigma\cdot\mathrm{total}$
+  \State $\mathrm{shifts}[\mathrm{centre}-d] \gets
+         -\sigma\cdot\mathrm{total}$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\noindent
+Here $\sigma = \pm1$ encodes the shear direction.  The only
+operations are addition, subtraction, and comparison.  The loop body
+maps directly to a wavefront propagation rule in a CA: cell at
+distance~$d$ reads its neighbour at distance~$d-1$ and applies one
+Bresenham step.
+
+\subsection{Shear execution}
+
+Given the shift array, each shear is a bijective permutation within
+each row (for $x$-shears) or column (for $y$-shears):
+\begin{equation}
+\mathrm{grid}_{\mathrm{new}}[x, y, z]
+= \mathrm{grid}_{\mathrm{old}}[x - \mathrm{shifts}[y],\; y,\; z].
+\end{equation}
+Cells whose source index falls outside $[0,L)$ remain empty.
+
+\subsection{Complete rotation}
+
+The full rotation consists of three sequential shears:
+\begin{enumerate}
+\item $x$-shear with slope $-t_p/t_q$ along $y$,
+\item $y$-shear with slope $+pL/(qL)$ along $x$,
+\item $x$-shear with slope $-t_p/t_q$ along $y$ (identical to step~1).
+\end{enumerate}
+
+\subsection{Cellular automaton interpretation}
+
+Each shear decomposes into two CA phases:
+\begin{description}
+\item[Propagation phase ($L/2$ ticks):]
+  A Bresenham wavefront propagates from the centre row (or column)
+  outward, one cell per tick.  Each cell reads its inward
+  neighbour's accumulator and applies a single add-compare step.
+  This is structurally identical to the BFS wavefront in our
+  pulsating-shell CA~\cite{bessa2025sinc}.
+\item[Shift phase ($\le L/2$ ticks):]
+  All rows shift their content simultaneously, one cell per tick.
+  Each cell with $\mathrm{shift\_remaining} > 0$ copies from its
+  lateral neighbour and decrements.  Rows that finish early are inert.
+\end{description}
+Total ticks per rotation: $3\times(L/2 + L/2) = 3L$.
+
+% ==================================================================
+\section{Results}
+\label{sec:results}
+
+All experiments use a centred cube of side $L/2$ with a small
+asymmetric flag (3 cells protruding in $+x$) as a fiducial marker.
+The rotation angle is $\theta=30^\circ$, specified by $(p,q)=(1,2)$.
+
+\subsection{Bit conservation}
+
+\begin{table}[h]
+\centering
+\caption{Active-cell counts before and after rotation.}
+\label{tab:bits}
+\begin{tabular}{@{}rrrc@{}}
+\toprule
+$L$ & Cells before & Cells after & Preserved \\
+\midrule
+128  & 262\,156 & 262\,156 & Yes \\
+256  & 2\,097\,164 & 2\,097\,164 & Yes \\
+512  & 16\,777\,228 & 16\,777\,228 & Yes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The three-shear decomposition is a composition of bijective
+permutations (integer translations within each row/column), so the
+total number of active cells is preserved \emph{exactly} for any angle
+and any~$L$.
+
+\subsection{Convergence of the tangent approximation}
+
+Table~\ref{tab:tan} shows the error in $\tan(\theta/2)$ as a function
+of the pair magnitude, both with and without $L$-scaling.
+
+\begin{table}[h]
+\centering
+\caption{Tangent-half-angle precision.  The exact value is
+$\tan15^\circ=0.26795$.}
+\label{tab:tan}
+\begin{tabular}{@{}rrrrr@{}}
+\toprule
+$p$ & $q$ & $\mathrm{isqrt}$ & $t_p/t_q$ & Error \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{Without $L$-scaling (raw pair):}} \\
+1 & 2 & 1 & 0.3333 & 24.4\% \\
+5 & 10 & 8 & 0.2778 & 3.7\% \\
+50 & 100 & 86 & 0.2688 & 0.32\% \\
+500 & 1000 & 866 & 0.2680 & 0.001\% \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{With $L$-scaling, $(p,q)=(1,2)$:}} \\
+128 & 256 & 221 & 0.2683 & 0.15\% \\
+256 & 512 & 443 & 0.2680 & 0.04\% \\
+512 & 1024 & 886 & 0.2681 & 0.04\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Geometric fidelity}
+
+To quantify the residual shear, we de-rotate the output by~$-30^\circ$
+(using floating-point, for measurement only) and measure the tilt
+of the top edge and the maximum positional deviation from the ideal
+square.
+
+\begin{table}[h]
+\centering
+\caption{Geometric fidelity with $L$-scaled pair $(1,2)$.}
+\label{tab:fidelity}
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+$L$ & Edge tilt & Max pos.\ error & Relative error \\
+\midrule
+128 & $0.29^\circ$ & 1.8 cells & 5.6\% \\
+256 & $0.14^\circ$ & 1.6 cells & 2.5\% \\
+512 & $0.07^\circ$ & 1.7 cells & 1.3\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The edge tilt and relative error both decrease as $O(1/L)$, confirming
+convergence to the exact rotation.  The absolute positional error
+remains bounded at $\approx 1.7$ cells (the inherent Bresenham
+rounding of $\pm1$ cell per shear, compounded over three shears).
+
+% ==================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Sources of error}
+
+Two distinct sources contribute to the residual distortion:
+
+\begin{enumerate}
+\item \textbf{Tangent approximation error.}
+  The integer square root in~\eqref{eq:cos} truncates
+  $\sqrt{q^2-p^2}$ to $\lfloor\sqrt{q^2-p^2}\rfloor$, introducing
+  a systematic bias in $\tan(\theta/2)$.  For $(p,q)=(1,2)$,
+  $\mathrm{isqrt}(3)=1$ versus $\sqrt{3}=1.732$, yielding a 24\%
+  error.  The $L$-scaling technique (Section~\ref{sec:scaling})
+  reduces this to $O(1/L)$.
+
+\item \textbf{Bresenham discretisation.}
+  Each shear rounds the shift to the nearest integer, introducing
+  $\pm 1$ cell error per row per shear.  After three shears, the
+  maximum positional error is bounded by 3~cells regardless of~$L$.
+  The \emph{relative} error is therefore $O(1/L)$.
+\end{enumerate}
+
+Both sources vanish in the limit $L\to\infty$, and the rotation
+converges to the exact continuous result.
+
+\subsection{CA compatibility}
+
+The algorithm satisfies the constraints of our integer cellular
+automaton framework:
+\begin{itemize}
+\item \textbf{No multiplication or division} in the cell update rule.
+  The Bresenham accumulator replaces $d \times t_p / t_q$ with
+  $d$~iterations of add-compare.  The $\mathrm{isqrt}$ uses only
+  add, subtract, compare, and right-shift.
+\item \textbf{Local neighbourhood.}
+  During the propagation phase, each cell reads one neighbour
+  (toward the centre) for the accumulator.  During the shift phase,
+  each cell reads one lateral neighbour for the content.
+\item \textbf{Deterministic and reversible.}
+  Each shear is a bijection.  The inverse rotation uses the same
+  three shears in reverse order with negated slopes.
+\end{itemize}
+
+\subsection{Angle specification}
+
+The rotation angle is fully determined by the integer pair
+$(p,q)$.  This is analogous to the Bresenham ratio
+$(\mathrm{sinc\_p}, \mathrm{sinc\_q})$ in our sinc-wave CA: each
+cell stores two integers that define a frequency (or, here, an
+angle).  When all cells carry the same pair, the rotation is
+uniform.  Non-uniform pairs would produce spatially varying
+rotations---a mechanism for implementing curvature or torsion in
+future work.
+
+% ==================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have demonstrated that a three-dimensional rotation by an
+arbitrary angle can be performed on an integer lattice using only
+addition, subtraction, comparison, and bit-shift---operations
+available to a cellular automaton.  The Paeth three-shear
+decomposition, combined with Bresenham accumulators, provides an
+exact bijection (zero bit loss) with geometric error that vanishes
+as $O(1/L)$.  The $L$-scaling technique ensures that even the
+simplest angle specification, such as $(1,2)$ for $30^\circ$, achieves
+sub-degree accuracy for grids of modest size.
+
+The algorithm is implemented in~\texttt{ac\_rotation.c}
+(approximately 240 lines of~C) and is available in the project
+repository.
+
+% ==================================================================
+\begin{thebibliography}{9}
+
+\bibitem{paeth1986}
+A.~W.\ Paeth,
+``A fast algorithm for general raster rotation,''
+in \emph{Graphics Interface '86}, 1986, pp.~77--81.
+
+\bibitem{toffoli1987}
+T.~Toffoli and N.~Margolus,
+\emph{Cellular Automata Machines: A New Environment for Modeling},
+MIT Press, 1987.
+
+\bibitem{bessa2025sinc}
+A.~Bessa,
+``Integer sinc-wave cellular automaton with pulsating wavefront
+and cylindrical helix,''
+unpublished manuscript, 2025.
+
+\end{thebibliography}
+
+\end{document}
