@@ -80,8 +80,16 @@ def on_move(event):
 
 fig.canvas.mpl_connect('motion_notify_event', on_move)
 
+def on_key(event):
+    if event.key == 'z':
+        ax1.view_init(elev=90, azim=-90)
+        ax2.view_init(elev=90, azim=-90)
+        fig.canvas.draw_idle()
+
+fig.canvas.mpl_connect('key_press_event', on_key)
+
 plt.tight_layout()
 print(f'Grid: {L}x{L}x{L}')
 print(f'Bits before: {len(before)}, after: {len(after)}, delta: {len(after)-len(before)}')
-print('Rotate with mouse. Close window to exit.')
+print('Rotate with mouse. Press Z for top view. Close window to exit.')
 plt.show()
