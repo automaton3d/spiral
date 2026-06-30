@@ -211,7 +211,6 @@ void init(void) {
  *
  * AND triple: triggered ∧ active ∧ spin
  * ================================================================= */
-#ifndef USE_CUDA
 void sinc_step(void) {
     and_double_count = 0;  /* reset per tick */
     and_triple_count = 0;
@@ -470,7 +469,6 @@ void pulse_step(void) {
         }
     }
 }
-#endif /* !USE_CUDA */
 
 /* forward declaration */
 void check_convergence(void);
@@ -479,14 +477,12 @@ void check_convergence(void);
  * Unified step — wavefront first, then sinc wave
  * (not used when USE_CUDA is defined; the CUDA driver calls kernels directly)
  * ================================================================= */
-#ifndef USE_CUDA
 void step_all(void) {
     pulse_step();
     sinc_step();
     tick++;
     check_convergence();
 }
-#endif
 
 /* =================================================================
  * Convergence detection (shared by SDL and headless)
