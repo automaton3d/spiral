@@ -1,0 +1,11 @@
+CC=cl
+CFLAGS=/nologo /O2 /TC /W3
+
+spiral_axis.exe: spiral_axis.c
+	$(CC) $(CFLAGS) /Fespiral_axis.exe spiral_axis.c
+
+clean:
+	-del spiral_axis.exe spiral_axis.obj 2>nul
+
+run: spiral_axis.exe
+	spiral_axis.exe $(AX) $(AY) $(AZ)
