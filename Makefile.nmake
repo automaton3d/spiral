@@ -1,8 +1,9 @@
 # Makefile.nmake — build the spiral CA (MSVC via nmake)
 #
 # Usage:
-#   nmake /f Makefile.nmake                # build spiral.exe
+#   nmake /f Makefile.nmake                # build spiral.exe, test_axis.exe, spiral_3d.exe
 #   nmake /f Makefile.nmake test_axis.exe  # build headless test_axis.exe
+#   nmake /f Makefile.nmake spiral_3d.exe  # build interactive 3D viewer
 #   nmake /f Makefile.nmake clean          # remove artefacts
 
 CC     = cl
@@ -11,13 +12,27 @@ CFLAGS = /Ox /W3
 SDL_INC = /I"E:\vcpkg\installed\x64-windows\include"
 SDL_LIB = "E:\vcpkg\installed\x64-windows\lib\SDL3.lib"
 
-all: spiral.exe test_axis.exe
+all: spiral.exe test_axis.exe spiral_3d.exe
 
 spiral.exe: spiral.c spiral.h
 	$(CC) $(CFLAGS) /Fe:spiral.exe spiral.c $(SDL_INC) $(SDL_LIB)
 
 test_axis.exe: test_axis.c spiral.c spiral.h
 	$(CC) $(CFLAGS) /DNO_SDL /Fe:test_axis.exe test_axis.c spiral.c
+
+# Interactive 3D viewer.
+# The CA core (spiral.c) must be compiled headless (-DNO_SDL) so its own
+# main()/render_frame are excluded, then linked with spiral_3d.c (viewer).
+# NOTE: uses spiral_nosdl.obj (not spiral.obj) so it never collides with
+# the SDL build of spiral.c used by spiral.exe.
+spiral_3d.exe: spiral_3d.obj spiral_nosdl.obj
+	$(CC) /Fe:spiral_3d.exe spiral_3d.obj spiral_nosdl.obj $(SDL_LIB)
+
+spiral_3d.obj: spiral_3d.c spiral.h
+	$(CC) $(CFLAGS) /c spiral_3d.c $(SDL_INC)
+
+spiral_nosdl.obj: spiral.c spiral.h
+	$(CC) $(CFLAGS) /DNO_SDL /c /Fospiral_nosdl.obj spiral.c
 
 clean:
 	-del /q *.obj *.exe 2>nul

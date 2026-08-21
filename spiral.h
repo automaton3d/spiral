@@ -49,7 +49,7 @@
 /* =================================================================
  * Grid dimensions — change L here to scale the entire simulation
  * ================================================================= */
-#define L 221
+#define L 321
 
 #define INF_R2    0xFFFFFFFFu
 #define MID       (L / 2)
