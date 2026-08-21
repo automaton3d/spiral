@@ -1,3 +1,11 @@
 spiral_axis
 spiral_axis.exe
 spiral_axis.obj
+
+test_axis
+test_axis.exe
+test_axis.obj
+
+spiral
+spiral.exe
+*.obj

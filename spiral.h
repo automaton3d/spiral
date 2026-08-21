@@ -1,15 +1,32 @@
 /*
  * spiral.h — header for emergent spiral CA on pulsating wavefront
+ *            (arbitrary rotation axis version)
  *
  * The spiral is a cylindrical helix traced by a walker:
  *   1) BFS wavefront propagation (sum-of-odds for r2)
- *   2) Walker advances 1 cell/tick along a cylinder of radius R_CYL
- *      centered at (CYL_X0, CYL_Y0), parallel to z
- *   3) Bresenham accumulator interleaves planar (rotation) and
- *      vertical (climb) steps for correct pitch
+ *   2) Walker advances 1 cell/tick around a cylinder of radius R_CYL
+ *      whose axis is parallel to the integer vector
+ *      AXIS = (axis_x, axis_y, axis_z) with |AXIS| = L/2, and whose
+ *      centre line passes at distance R_CYL from the lattice centre,
+ *      so the walk starts at r = 0 and ends at r = L/2 (theta: 0..pi).
+ *   3) A Bresenham accumulator interleaves orbital steps (rotation
+ *      around AXIS) with climb steps (6-neighbour DDA along AXIS).
  *
- * Runtime operations: addition, subtraction, shift, comparison only.
- * No multiplication, no division, no lookup tables, no floats.
+ * Runtime CA operations: addition, subtraction, shift, comparison.
+ * NO multiplication, NO division, NO floats, NO lookup of trig.
+ * All axis-dependent constants (cross-product increments D[m], the
+ * incremental table K[k][m] = 2 D_k . D_m, the offset vector P and
+ * the target |r x AXIS|^2) are computed ONCE at init time, exactly
+ * like the old 2*dx+1 constants were.
+ *
+ * Radial measure: for a point u = r - P (P = offset of the cylinder
+ * axis line from the centre), the squared distance to the axis is
+ *      dist^2 = |u x AXIS|^2 / |AXIS|^2
+ * so the walker compares |u x AXIS|^2 against R_CYL^2 * |AXIS|^2.
+ * The cross product c = u x AXIS is itself maintained incrementally:
+ * a unit move e_i changes c by the constant vector e_i x AXIS, and
+ * |c|^2 is updated by a running increment G[m] whose own update is a
+ * constant from the K table — the exact generalisation of sum-of-odds.
  */
 
 #ifndef SPIRAL_H_
@@ -38,32 +55,27 @@
 #define MID       (L / 2)
 #define R_MAX     (L / 2)
 #define RADIUS    (L / 2 - 2)
+#define RADIUS_SQ ((long long)RADIUS * RADIUS)
 
 /* --- Pulsating sweep parameters (L-invariant) --- */
 #define PULSE_TOLERANCE  1
 #define PULSE_STEP       (((L) + 15) / 30)
 
 /* --- Cylindrical helix parameters ---
- *
- * The XY projection of the parametric spherical spiral is
- * approximately circular. Best-fit circle (exact, L-independent):
- *   center = (-0.0195*r_max, +0.1810*r_max)  ≈ (0, R_CYL)
- *   radius = 0.18103*r_max                    ≈ R_CYL
- *
- * Compile-time integer approximation: 93/512 ≈ 0.18164 (<0.4% error).
- * Multiplications below are compile-time constants, not runtime.
- */
+ * Compile-time integer approximation: 93/512 ~= 0.18164 of r_max. */
 #define R_CYL       ((R_MAX * 93 + 256) >> 9)
-#define CYL_X0      MID
-#define CYL_Y0      (MID + R_CYL)
 #define R_CYL_SQ    (R_CYL * R_CYL)
 
-/* Discrete (Manhattan) circumference of radius-R_CYL circle.
- * On a von Neumann grid, axial steps cover 2πR Euclidean distance
- * in approximately 8R steps (correction factor 4/π ≈ 1.273). */
+/* Default rotation axis: (0,0,+L/2), matching the original +z helix.
+ * Override at runtime: spiral ax ay az  (any direction; the vector is
+ * rescaled so that |AXIS| = L/2). */
+#define AXIS_X      0
+#define AXIS_Y      0
+#define AXIS_Z      R_MAX
+
+/* Discrete (Manhattan) circumference of a radius-R_CYL circle:
+ * axial steps cover 2*pi*R Euclidean distance in about 8R steps. */
 #define CYL_CIRC    (R_CYL << 3)
-/* Total walker steps = circumference (planar) + height (z) */
-#define CYL_TOTAL   (CYL_CIRC + R_MAX)
 
 /* --- Display --- */
 #define WINDOW_W  (L + 500 + 80)
@@ -85,7 +97,7 @@ typedef struct {
 /* --- Spiral point storage (for walker + rendering) --- */
 typedef struct { int x, y, z; } SpiralPt;
 
-#define MAX_SPIRAL_PTS (R_MAX * 3)
+#define MAX_SPIRAL_PTS (R_MAX * 12)
 extern SpiralPt spiral_pts[];
 extern int spiral_n;
 extern int spiral_done;
@@ -94,6 +106,7 @@ extern int spiral_done;
 extern Cell (*grid)[L][L];
 extern Cell (*grid_next)[L][L];
 extern int tick;
+extern int axis_x, axis_y, axis_z;   /* rotation axis, |AXIS| = L/2 */
 
 /* =================================================================
  * Integer square root (bit-by-bit, no multiplication)
@@ -137,6 +150,7 @@ SINLINE unsigned int pulse_from_time(unsigned int t) {
 void init(void);
 void step_all(void);
 void pulse_step(void);
+void spiral_set_axis(int ax, int ay, int az);
 void spiral_init(void);
 void spiral_step(void);
 

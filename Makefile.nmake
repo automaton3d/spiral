@@ -1,8 +1,9 @@
 # Makefile.nmake — build the spiral CA (MSVC via nmake)
 #
 # Usage:
-#   nmake /f Makefile.nmake          # build spiral.exe
-#   nmake /f Makefile.nmake clean    # remove artefacts
+#   nmake /f Makefile.nmake                # build spiral.exe
+#   nmake /f Makefile.nmake test_axis.exe  # build headless test_axis.exe
+#   nmake /f Makefile.nmake clean          # remove artefacts
 
 CC     = cl
 CFLAGS = /Ox /W3
@@ -10,10 +11,13 @@ CFLAGS = /Ox /W3
 SDL_INC = /I"E:\vcpkg\installed\x64-windows\include"
 SDL_LIB = "E:\vcpkg\installed\x64-windows\lib\SDL3.lib"
 
-all: spiral.exe
+all: spiral.exe test_axis.exe
 
 spiral.exe: spiral.c spiral.h
 	$(CC) $(CFLAGS) /Fe:spiral.exe spiral.c $(SDL_INC) $(SDL_LIB)
+
+test_axis.exe: test_axis.c spiral.c spiral.h
+	$(CC) $(CFLAGS) /DNO_SDL /Fe:test_axis.exe test_axis.c spiral.c
 
 clean:
 	-del /q *.obj *.exe 2>nul
