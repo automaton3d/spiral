@@ -1,14 +1,32 @@
 /*
- *  spiral_3d.c — interactive 3D viewer for the spiral CA.
+ *  spiral_3d_bcast.c — interactive 3D viewer for the spiral CA,
+ *                      "grid broadcast" edition (derived from spiral_3d.c).
  *
  *  Uses the SAME cellular automaton as spiral.c (BFS sum-of-odds wavefront +
  *  Bresenham helix walker around an arbitrary axis).  The CA core is compiled
- *  separately with -DNO_SDL (see Makefile / Make.nmake / build_3d.bat);
- *  this file only adds the 3D rendering.
+ *  separately with -DNO_SDL (see Makefile.nmake / build_3d.bat); this file
+ *  only adds the 3D rendering.
  *
- *  Rendering: the spiral arm is drawn as true 3D voxels (small cubes,
- *  smaller than one lattice cell so neighbours leave visible gaps), with
- *  every camera-facing face shaded by its normal, painter-sorted far→near.
+ *  NEW IN THIS VERSION — GRID BROADCAST ("ant view"):
+ *    Every time the walker computes a new spiral point, that cell
+ *    receives the current tick as its broadcast value.  The value then
+ *    spreads through the WHOLE grid by the classic ant-view rule:
+ *    each cell looks ONLY at its 6 face neighbours and, if any
+ *    neighbour carries a GREATER value, copies it.  No cell ever
+ *    senses anything beyond its neighbourhood, yet the monotonic
+ *    values diffuse as waves that eventually reach every cell of the
+ *    L^3 lattice.  The diffusion pass runs in lockstep with the CA
+ *    tick, alongside the BFS pulse.  The viewer paints a sparse
+ *    sample of the grid as 1-px dust: hue encodes WHICH value arrived
+ *    last (golden-ratio walk -> different colour per wave) and
+ *    brightness encodes how recently it arrived.
+ *    The broadcast layer is deliberately FAINT and drawn FIRST — lowest
+ *    priority — so it never obscures the other information.
+ *
+ *  Rendering: the spiral arm is drawn as true 3D voxels (small cubes),
+ *  with every camera-facing face shaded by its normal, painter-sorted
+ *  far->near.  The pulsating wavefront is shown as a Fibonacci-sphere
+ *  bubble of 1-px points.
  *
  *  Controls:
  *    LMB drag   — orbit camera (yaw / pitch)
@@ -19,6 +37,7 @@
  *    A          — toggle auto-rotation
  *    W          — toggle pulse-wave rings
  *    B          — toggle Fibonacci-sphere bubble (propagating front)
+ *    X          — toggle grid-broadcast dust
  *    G          — toggle axes & bounding sphere
  *    R          — reset camera
  *    ESC        — quit
@@ -44,6 +63,7 @@ static float pan_x = 0.0f, pan_y = 0.0f;
 static bool auto_rotate  = false;
 static bool show_wave    = true;
 static bool show_bubble  = true;
+static bool show_cast    = true;
 static bool show_axes    = true;
 static bool paused       = false;
 static int  steps_pp     = 1;
@@ -259,6 +279,163 @@ static void draw_bubble(SDL_Renderer *ren, int W, int H, float R) {
     }
 }
 
+/* ================================================================
+ * GRID BROADCAST — "ant view" diffusion covering the whole grid.
+ *
+ * State: one unsigned value per cell (bgrid); 0 = never reached.
+ *
+ * Injection: when the walker computes a new spiral point, that cell
+ * is assigned the current tick (a monotonically growing value).
+ *
+ * Ant-view rule (one pass per tick, in lockstep with the CA):
+ *   every cell inspects ONLY its 6 face neighbours; if any neighbour
+ *   holds a GREATER value, the cell copies the greatest one.  Cells
+ *   never sense anything beyond their neighbourhood, yet the values
+ *   diffuse outward as waves that in finite time reach every cell of
+ *   the L^3 grid — the whole grid IS covered, purely by local moves.
+ *
+ * Visualisation: a fixed sparse sample of the lattice (every
+ * BCAST_SSTRIDE-th site) is drawn as 1-px dust, FIRST in the frame
+ * (lowest priority, faint).  Hue = golden-ratio walk of the arrived
+ * value (each wave paints a different colour); brightness decays
+ * with the time since arrival, so fresh wavefronts glow and older
+ * regions settle to a dim tinted residue.
+ * ================================================================ */
+#define BCAST_EVERY   2      /* diffusion pass cadence (ticks)       */
+#define BCAST_SSTRIDE 12     /* visual sampling stride               */
+#define G_N           (((L) + (BCAST_SSTRIDE) - 1) / (BCAST_SSTRIDE))
+#define BCAST_NSAMP   (G_N * G_N * G_N)
+#define BCAST_YOUNG   36     /* ticks a fresh arrival stays glowing  */
+
+static unsigned int *bgrid = NULL;   /* L^3 broadcast values, 0 = none */
+static float samp_x[BCAST_NSAMP], samp_y[BCAST_NSAMP], samp_z[BCAST_NSAMP];
+
+static void hsv2rgb(float h, float s, float v,
+                    float *R, float *G, float *B) {
+    float i = floorf(h * 6.0f);
+    int   k = (int)i;
+    if (k > 5) k = 5;
+    if (k < 0) k = 0;
+    float f = h * 6.0f - i;
+    float p = v * (1.0f - s);
+    float q = v * (1.0f - s * f);
+    float t = v * (1.0f - s * (1.0f - f));
+    switch (k) {
+    case 0: *R = v; *G = t; *B = p; break;
+    case 1: *R = q; *G = v; *B = p; break;
+    case 2: *R = p; *G = v; *B = t; break;
+    case 3: *R = p; *G = q; *B = v; break;
+    case 4: *R = t; *G = p; *B = v; break;
+    default:*R = v; *G = p; *B = q; break;
+    }
+}
+
+/* Inject the current tick at a newly computed spiral point: the
+ * source cell of a fresh ant-view wave. */
+static void bcast_inject(int x, int y, int z) {
+    bgrid[((long long)x * L + y) * L + z] = (unsigned int)tick + 1;
+}
+
+/* One ant-view diffusion pass: copy-the-greatest-neighbour, in
+ * place.  Scan direction alternates each pass so neither diagonal
+ * direction gets a systematic shortcut.  Runs every BCAST_EVERY
+ * ticks, amortising its cost against the rest of the per-tick CA
+ * work (it is folded into the same tick loop as the BFS pulse). */
+static void bcast_step(void) {
+    if (tick % BCAST_EVERY) return;
+
+    int p  = (tick / BCAST_EVERY) & 1;
+    int x0 = p ? L - 1 : 0, xs = p ? -1 : 1;
+    int y0 = p ? L - 1 : 0, ys = p ? -1 : 1;
+    int z0 = p ? L - 1 : 0, zs = p ? -1 : 1;
+
+    for (int xi = 0; xi < L; xi++) {
+        int x = x0 + xi * xs;
+        for (int yi = 0; yi < L; yi++) {
+            int y = y0 + yi * ys;
+            long long row = ((long long)x * L + y) * L;
+            for (int zi = 0; zi < L; zi++) {
+                int z = z0 + zi * zs;
+                long long i = row + z;
+                unsigned int v = bgrid[i];
+                unsigned int m = v;
+                if (x > 0)     { unsigned int n = bgrid[i - (long long)L * L]; if (n > m) m = n; }
+                if (x < L - 1) { unsigned int n = bgrid[i + (long long)L * L]; if (n > m) m = n; }
+                if (y > 0)     { unsigned int n = bgrid[i - L];   if (n > m) m = n; }
+                if (y < L - 1) { unsigned int n = bgrid[i + L];   if (n > m) m = n; }
+                if (z > 0)     { unsigned int n = bgrid[i - 1];   if (n > m) m = n; }
+                if (z < L - 1) { unsigned int n = bgrid[i + 1];   if (n > m) m = n; }
+                if (m != v) bgrid[i] = m;
+            }
+        }
+    }
+}
+
+/* Inject the current tick at every newly computed spiral point.
+ * spiral.c appends exactly one point per completed walker step, so
+ * any growth of spiral_n means that many fresh wave sources. */
+static void poll_broadcasts(void) {
+    static int seen = -1;
+    if (seen < 0) { seen = spiral_n; return; }   /* ignore the seed */
+
+    while (spiral_n > seen) {
+        bcast_inject(spiral_pts[seen].x,
+                     spiral_pts[seen].y,
+                     spiral_pts[seen].z);
+        seen++;
+    }
+}
+
+static void draw_broadcast(SDL_Renderer *ren, int W, int H) {
+    static bool seeded = false;
+    if (!seeded) {
+        int n = 0;
+        for (int i = 0; i < G_N; i++)
+        for (int j = 0; j < G_N; j++)
+        for (int k = 0; k < G_N; k++) {
+            samp_x[n] = (float)(i * BCAST_SSTRIDE) - MID;
+            samp_y[n] = (float)(j * BCAST_SSTRIDE) - MID;
+            samp_z[n] = (float)(k * BCAST_SSTRIDE) - MID;
+            n++;
+        }
+        seeded = true;
+    }
+
+    const float RD = (float)RADIUS * 1.8f;   /* depth-fade range */
+
+    for (int i = 0; i < BCAST_NSAMP; i++) {
+        long long gx = (long long)(samp_x[i] + MID);
+        long long gy = (long long)(samp_y[i] + MID);
+        long long gz = (long long)(samp_z[i] + MID);
+        unsigned int v = bgrid[(gx * L + gy) * L + gz];
+        if (v == 0) continue;            /* wave has not arrived yet */
+
+        float px, py, pd;
+        proj_point(samp_x[i], samp_y[i], samp_z[i], W, H, &px, &py, &pd);
+
+        /* hue of the value that arrived here last: each wave paints
+         * a different colour (golden-ratio walk of the value) */
+        float h = fmodf((float)v * 0.61803398875f, 1.0f);
+        float r, g, b;
+        hsv2rgb(h, 0.55f, 1.0f, &r, &g, &b);
+
+        /* freshness: fresh arrivals glow, old ones settle dim */
+        int age = (int)tick - (int)v;
+        float fr = 1.0f - (float)age / (float)BCAST_YOUNG;
+        if (fr < 0.0f) fr = 0.0f;
+        if (fr > 1.0f) fr = 1.0f;
+        float base = 42.0f + 100.0f * fr;
+
+        float ft = (pd - (cam_dist - RD)) / (2.0f * RD);
+        if (ft < 0.0f) ft = 0.0f; else if (ft > 1.0f) ft = 1.0f;
+        Uint8 a = (Uint8)(base * (0.65f + 0.35f * ft));
+
+        SDL_SetRenderDrawColor(ren,
+            (Uint8)(r * 255.0f), (Uint8)(g * 255.0f), (Uint8)(b * 255.0f), a);
+        SDL_RenderPoint(ren, px, py);
+    }
+}
+
 static void draw_sphere_frames(SDL_Renderer *ren, int W, int H, float R) {
     /* three great circles on the bounding sphere */
     draw_circle(ren, W, H, 0, 0, 0, R, 60, 65, 80);
@@ -354,6 +531,9 @@ static void render(SDL_Renderer *ren, int W, int H) {
     unsigned int pulse_r2 = pulse_from_time((unsigned int)tick);
     int cur_r = isqrt((int)pulse_r2);
 
+    /* ---- lowest-priority layer first: the grid broadcast dust ---- */
+    if (show_cast) draw_broadcast(ren, W, H);
+
     if (show_axes) {
         draw_sphere_frames(ren, W, H, (float)RADIUS);
         draw_world_axes(ren, W, H, (float)RADIUS);
@@ -366,7 +546,7 @@ static void render(SDL_Renderer *ren, int W, int H) {
     /* ------------------------------------------------------------
      * The spiral itself: true 3D voxels (small cubes with every
      * camera-facing face shaded by its normal), painter-sorted
-     * far→near, coloured by arc position; white when the cell is on
+     * far->near, coloured by arc position; white when the cell is on
      * the currently active wavefront.
      * ------------------------------------------------------------ */
     {
@@ -393,7 +573,7 @@ static void render(SDL_Renderer *ren, int W, int H) {
             int vis[6];
             for (int f = 0; f < 6; f++) vis[f] = (nz[f] > 0.02f);
 
-            const float hs = 0.175f;    /* <1 → visible gap between voxels
+            const float hs = 0.175f;    /* <1 -> visible gap between voxels
                                            (half size) */
             const float cc[8][3] = {
                 {-hs,-hs,-hs},{ hs,-hs,-hs},{-hs, hs,-hs},{ hs, hs,-hs},
@@ -409,7 +589,7 @@ static void render(SDL_Renderer *ren, int W, int H) {
                 {0,2,3,1},  /* -Z */
             };
 
-            /* view-space depth per voxel, far → near */
+            /* view-space depth per voxel, far -> near */
             for (int i = 0; i < np; i++) {
                 float wx = (float)(spiral_pts[i].x - MID);
                 float wy = (float)(spiral_pts[i].y - MID);
@@ -501,18 +681,21 @@ static void render(SDL_Renderer *ren, int W, int H) {
                  axis_x, axis_y, axis_z, cur_r, spiral_n, MAX_SPIRAL_PTS, tick);
 
         SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
-        draw_text(ren, "LMB ROTATE  RMB PAN  WHEEL ZOOM  SPACE PAUSE  A AUTO  W WAVE  B BUBBLE  G AXES  R RESET  ESC QUIT",
+        draw_text(ren, "LMB ROTATE  RMB PAN  WHEEL ZOOM  SPACE PAUSE  1-5 SPEED  ESC QUIT",
                   10, 10);
+        SDL_SetRenderDrawColor(ren, 170, 170, 170, 255);
+        draw_text(ren, "A AUTO  W WAVE  B SPHERE  X CAST  G AXES  R RESET",
+                  10, 26);
         SDL_SetRenderDrawColor(ren, 120, 220, 220, 255);
-        draw_text(ren, axis_txt, 10, 26);
+        draw_text(ren, axis_txt, 10, 42);
 
         if (paused) {
             SDL_SetRenderDrawColor(ren, 255, 220, 80, 255);
-            draw_text(ren, "PAUSED", 10, 42);
+            draw_text(ren, "PAUSED", 10, 58);
         }
         if (spiral_done) {
             SDL_SetRenderDrawColor(ren, 120, 255, 120, 255);
-            draw_text(ren, "SPIRAL COMPLETE", 10, 42);
+            draw_text(ren, "SPIRAL COMPLETE", 10, 58);
         }
         {
             char sp[24];
@@ -587,6 +770,7 @@ static void handle(SDL_Event *e) {
         case SDLK_A:      auto_rotate = !auto_rotate; break;
         case SDLK_W:      show_wave = !show_wave; break;
         case SDLK_B:      show_bubble = !show_bubble; break;
+        case SDLK_X:      show_cast = !show_cast; break;
         case SDLK_G:      show_axes = !show_axes; break;
         case SDLK_R:
             cam_yaw   = -0.9f;
@@ -629,6 +813,13 @@ int main(int argc, char **argv) {
     memset(grid,      0, sizeof(Cell) * L * L * L);
     memset(grid_next, 0, sizeof(Cell) * L * L * L);
 
+    /* broadcast value grid (ant-view state), 0 = never reached */
+    bgrid = (unsigned int *)calloc((size_t)L * L * L, sizeof(unsigned int));
+    if (!bgrid) {
+        printf("Out of memory (broadcast grid)\n");
+        return 1;
+    }
+
     init();
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -637,7 +828,7 @@ int main(int argc, char **argv) {
     }
 
     SDL_Window *win = SDL_CreateWindow(
-        "Spiral CA — interactive 3D viewer (LMB-orbit, RMB-pan, Wheel-zoom, ESC-quit)",
+        "Spiral CA — 3D viewer + grid broadcast (LMB-orbit, RMB-pan, Wheel-zoom, ESC-quit)",
         1024, 768, SDL_WINDOW_RESIZABLE);
     if (!win) {
         printf("Window error: %s\n", SDL_GetError());
@@ -668,12 +859,17 @@ int main(int argc, char **argv) {
             for (int s = 0; s < steps_pp; s++) {
                 if (spiral_done) break;
                 step_all();
+                bcast_step();   /* ant-view diffusion, same tick */
             }
             Uint64 frame_ms = SDL_GetTicks() - t0;
             if (frame_ms < 13) SDL_Delay(13 - (Uint32)frame_ms);
         } else {
             SDL_Delay(13);
         }
+
+        /* inject the current tick at each newly computed spiral
+         * point: the source cell of a fresh ant-view wave */
+        poll_broadcasts();
 
         int W, H;
         SDL_GetWindowSize(win, &W, &H);
@@ -688,5 +884,6 @@ int main(int argc, char **argv) {
 
     free(grid);
     free(grid_next);
+    free(bgrid);
     return 0;
 }

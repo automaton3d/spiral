@@ -48,8 +48,9 @@
 
 /* =================================================================
  * Grid dimensions — change L here to scale the entire simulation
+ * (201 = fast test size; 321 = full size)
  * ================================================================= */
-#define L 321
+#define L 201
 
 #define INF_R2    0xFFFFFFFFu
 #define MID       (L / 2)
@@ -92,6 +93,8 @@ typedef struct {
     unsigned int r2;      /* Euclidean distance-squared (INF_R2 = unvisited) */
     unsigned char active; /* 1 if on pulsating shell */
     unsigned char spin;   /* 1 if on the spiral arm */
+    unsigned short w;     /* predefined value in [0, 9L-1]
+                             (used by the momentum election) */
 } Cell;
 
 /* --- Spiral point storage (for walker + rendering) --- */

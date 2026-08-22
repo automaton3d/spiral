@@ -1,0 +1,141 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{parskip}
+\usepackage{microtype}
+
+\title{\textbf{The Essence of the Cellular Automaton}\\[2mm]
+\large An emergent spiral on a pulsating wavefront}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-8mm}
+
+\section{State per cell}
+Each cell of the $L^3$ lattice ($L = 321$) stores only:
+\[
+\text{cell} \;=\; \big(\; r^2,\;\; r,\;\; \texttt{active},\;\; \texttt{spin} \;\big),
+\]
+where $r^2$ is the squared Euclidean distance to the center
+($\texttt{INF}$ = not yet visited), $r$ is the integer radius, and two
+bits mark membership: \texttt{active} (on the pulsating shell) and
+\texttt{spin} (on the spiral arm).
+
+\section{Pulsating wavefront --- the ``sum of odds''}
+The distance to the center is never computed by a square root or by
+multiplication: it propagates through BFS. A unit step along axis $i$
+changes $r^2$ by exactly the corresponding odd number, because
+\begin{equation}
+(n+1)^2 - n^2 \;=\; 2n + 1 .
+\end{equation}
+Hence, for a cell $x$ and its neighbor $x + e_i$, where $c_i$ denotes the
+coordinate centered on axis $i$:
+\begin{equation}
+r^2(x + e_i) \;\leftarrow\; \min\!\big(r^2(x+e_i),\;\; r^2(x) + 2\,|c_i| + 1\big).
+\end{equation}
+
+On top of this field acts the pulse: a \emph{triangular} wave in $r^2$
+space,
+\begin{equation}
+p(t) \in \big[\,0,\;\; 0.92\,R_{\max}^2\,\big],
+\end{equation}
+which expands and contracts over time. A cell belongs to the living shell
+exactly when
+\begin{equation}
+\texttt{active}(x,t) \;\iff\; \big|\, r^2(x) - p(t) \,\big| \;\le\; \tau ,
+\end{equation}
+with a small tolerance $\tau$ ($\approx 1$).
+
+\section{The helical walker (3D Bresenham around an arbitrary axis)}
+
+\subsection{Target geometry}
+A cylinder of radius $R_{\mathrm{cyl}}$ whose axis is the line
+$\{\,P + sA\,\}$, with
+\begin{equation}
+|A| = \tfrac{L}{2}, \qquad |P| = R_{\mathrm{cyl}}, \qquad P \perp A .
+\end{equation}
+Because the center lies on that cylinder surface, the helix starts at
+$r = 0$ and ends at $r = L/2$ (polar angle $\theta : 0 \to \pi$): one full
+half-turn while climbing from the core to the outer shell.
+
+\subsection{Radius to the axis without multiplication}
+For $u = v - P$ (offset from the cylinder axis line), the squared distance
+to the axis is
+\begin{equation}
+d^2 \;=\; \frac{|u \times A|^2}{|A|^2},
+\end{equation}
+so the walker compares $|u \times A|^2$ against the fixed target
+$\mathrm{TGT} = R_{\mathrm{cyl}}^2 |A|^2$. Both the cross product
+$c = u \times A$ and its squared norm $E = |c|^2$ are maintained
+\emph{incrementally}: a lattice move $e_m$ changes $c$ by the constant
+vector
+\begin{equation}
+D_m \;=\; e_m \times A,
+\end{equation}
+and changes $E$ by
+\begin{equation}
+G[m] \;=\; 2\,(c \cdot D_m) + |D_m|^2,
+\end{equation}
+whose own update after move $k$ uses the precomputed table
+\begin{equation}
+K[k][m] \;=\; 2\, D_k \cdot D_m .
+\end{equation}
+This is the exact generalization of the classic ``$2dx + 1$'' increment
+from scalar coordinates to cross-product space.
+
+\subsection{Orbital step}
+Among the six lattice moves whose tangential projection is positive
+($t = -c$ enforces a single sense of rotation), pick the one minimizing
+the radial error
+\begin{equation}
+\big|\, E + G[m] - \mathrm{TGT} \,\big|,
+\end{equation}
+restricted to the tolerance band $|\cdot| \le \mathrm{TOL}$ (about one
+cell); ties favor the largest angular progress. If no move stays inside
+the band, fall back to minimum radial error.
+
+\subsection{Climb step}
+A multi-dimensional DDA along the axis: each accumulator obeys
+$\mathit{dda}_i \mathrel{+}= |a_i|$; the largest one fires the climb move
+and then subtracts $|a_x| + |a_y| + |a_z|$. Lattice moves are therefore
+distributed exactly in proportion to the axis components.
+
+\subsection{Interleaving}
+A Bresenham accumulator interleaves orbital and climb steps with period
+\begin{equation}
+\mathit{orbit\_total} + \mathit{climb\_total},
+\end{equation}
+tracing the helix one cell per tick.
+
+\section{The constraint that defines the automaton's character}
+At runtime only additions, subtractions, shifts, and comparisons exist:
+\emph{no multiplication, no division, no floating point, no trigonometry}.
+Everything that depends on the chosen axis --- $D_m$, $K[k][m]$, $P$,
+$\mathrm{TGT}$, $\mathrm{TOL}$, $\mathit{orbit\_total}$ --- is derived once
+at initialization time, where multiplication is allowed. All geometric
+intelligence lives in precomputed constants plus local comparison rules.
+
+\section{Emergence}
+\texttt{spin} draws the arm; \texttt{active} paints the living shell.
+The spiral itself is never programmed: it emerges from the local rule
+``minimize radial error while keeping the rotation sense,'' executed on
+top of the pulsating bubble.
+
+\section{This edition: the ant-view broadcast}
+An additional layer follows the same philosophy. Each cell holds one
+monotonically growing value (0 = never reached). When the walker computes
+a new spiral point, that cell receives the current tick as its value.
+Then, once per tick, every cell inspects \emph{only} its six face
+neighbors and copies the greatest neighbor value if it exceeds its own:
+\begin{equation}
+v(x) \;\leftarrow\; \max\big(v(x),\; v(x \pm e_i)\big).
+\end{equation}
+No cell ever senses beyond its neighborhood, yet the values diffuse as
+waves that in finite time reach every cell of the $L^3$ grid --- global
+coverage achieved purely by local moves, in lockstep with the CA tick.
+
+\end{document}
