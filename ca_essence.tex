@@ -7,7 +7,7 @@
 \usepackage{microtype}
 
 \title{\textbf{The Essence of the Cellular Automaton}\\[2mm]
-\large An emergent spiral on a pulsating wavefront}
+\large A self-directed emergent spiral on a pulsating wavefront}
 \author{}
 \date{}
 
@@ -16,14 +16,18 @@
 \vspace{-8mm}
 
 \section{State per cell}
-Each cell of the $L^3$ lattice ($L = 321$) stores only:
+Each cell of the $L^3$ lattice ($L = 201$ in the reference build; $321$
+for the full-size run) stores only:
 \[
-\text{cell} \;=\; \big(\; r^2,\;\; r,\;\; \texttt{active},\;\; \texttt{spin} \;\big),
+\text{cell} \;=\; \big(\; r^2,\;\; r,\;\; \texttt{active},\;\;
+\texttt{spin},\;\; w \;\big),
 \]
 where $r^2$ is the squared Euclidean distance to the center
-($\texttt{INF}$ = not yet visited), $r$ is the integer radius, and two
-bits mark membership: \texttt{active} (on the pulsating shell) and
-\texttt{spin} (on the spiral arm).
+($\texttt{INF}$ = not yet visited), $r$ is the integer radius, two
+bits mark membership --- \texttt{active} (on the pulsating shell) and
+\texttt{spin} (on the spiral arm) --- and $w \in [\,0,\,9L-1\,]$ is a
+fixed per-cell value, hashed once from the coordinates at startup,
+that feeds the direction election of Sect.~\ref{sec:election}.
 
 \section{Pulsating wavefront --- the ``sum of odds''}
 The distance to the center is never computed by a square root or by
@@ -42,19 +46,22 @@ On top of this field acts the pulse: a \emph{triangular} wave in $r^2$
 space,
 \begin{equation}
 p(t) \in \big[\,0,\;\; 0.92\,R_{\max}^2\,\big],
+\qquad R_{\max} = \tfrac{L}{2},
 \end{equation}
 which expands and contracts over time. A cell belongs to the living shell
 exactly when
 \begin{equation}
 \texttt{active}(x,t) \;\iff\; \big|\, r^2(x) - p(t) \,\big| \;\le\; \tau ,
 \end{equation}
-with a small tolerance $\tau$ ($\approx 1$).
+with a small tolerance $\tau = 1$. The $0.92$ factor keeps the whole
+dynamics strictly inside the lattice: no active cell ever exceeds
+$r = \lfloor\sqrt{0.92}\,R_{\max}\rfloor$.
 
 \section{The helical walker (3D Bresenham around an arbitrary axis)}
 
 \subsection{Target geometry}
-A cylinder of radius $R_{\mathrm{cyl}}$ whose axis is the line
-$\{\,P + sA\,\}$, with
+A cylinder of radius $R_{\mathrm{cyl}} \approx 0.182\,R_{\max}$ whose axis
+is the line $\{\,P + sA\,\}$, with
 \begin{equation}
 |A| = \tfrac{L}{2}, \qquad |P| = R_{\mathrm{cyl}}, \qquad P \perp A .
 \end{equation}
@@ -125,17 +132,86 @@ The spiral itself is never programmed: it emerges from the local rule
 ``minimize radial error while keeping the rotation sense,'' executed on
 top of the pulsating bubble.
 
+\section{Electing the direction: the ant-view tournament on $w$}
+\label{sec:election}
+
+The fused automaton is not told where to spiral. At every expansion
+limit of the pulse --- the exact tick where $p(t)$ turns from ascending
+to descending --- the automaton harvests its own next rotation axis out
+of the $w$ field, through a tournament that no cell referees.
+
+\subsection{Sowing}
+Every \texttt{active} shell cell is seeded with the payload
+\begin{equation}
+\mathrm{payload}(x) \;=\; \bigl(\mathrm{score}(x) \ll 24\bigr)\;\big|\;\mathrm{code}(x),
+\qquad
+\mathrm{score} = H\bigl((w(x) + s) \bmod 9L,\; \mathrm{code}(x)\bigr),
+\end{equation}
+where $\mathrm{code}(x)$ is the cell's linear index (low bits) and $s$
+is the global seed dial. Because the code occupies the low bits, the
+payload order is a \emph{strict total order}: ties are impossible, so
+the winner is unique and independent of any scan order.
+
+\subsection{Diffusion --- and the flood trap}
+Each pass lets every cell adopt the greatest payload among its six face
+neighbors,
+\begin{equation}
+\mathrm{payload}(x) \;\leftarrow\; \max\bigl(\mathrm{payload}(x),\;
+\mathrm{payload}(x \pm e_i)\bigr),
+\end{equation}
+alternating sweep directions; $2R + 8$ passes guarantee full coverage of
+the torus. The subtlety: after enough passes the winning payload has been
+\emph{copied} across a large region of the grid, down to the lowest
+linear indices. An index scan for the maximum would therefore decode a
+\emph{copy} --- possibly the corner cell $(0,0,0)$, yielding
+$|m| = \sqrt{3}\,L/2$ and a nonsense axis. The implementation avoids the
+trap structurally: the true winner --- the \emph{seeded} cell holding the
+greatest payload --- is identified once, at sowing time, when payloads
+are still unique. The diffusion then remains what it should be: pure
+transport of the news, never a redefinition of the winner.
+
+\subsection{From winner to axis}
+The winner becomes the momentum vector: the raw displacement from the
+lattice center to the winning cell,
+\begin{equation}
+\boldsymbol{m} \;=\; x_{\mathrm{win}} - c .
+\end{equation}
+Only its \emph{direction} carries meaning; the magnitude is discarded by
+rescaling,
+\begin{equation}
+A \;=\; \frac{L/2}{|\boldsymbol{m}|}\,\boldsymbol{m},
+\end{equation}
+so the helix always walks on an axis of length exactly $L/2$. The axis is
+frozen while a walk is alive; the next election (next expansion limit)
+prepares a fresh direction for the next run. Nothing is prescribed: the
+direction is harvested from the CA's own state at the exact instant the
+wave reaches its limit.
+
 \section{This edition: the ant-view broadcast}
 An additional layer follows the same philosophy. Each cell holds one
-monotonically growing value (0 = never reached). When the walker computes
-a new spiral point, that cell receives the current tick as its value.
-Then, once per tick, every cell inspects \emph{only} its six face
-neighbors and copies the greatest neighbor value if it exceeds its own:
+monotonically growing value ($0$ = never reached). When the walker
+computes a new spiral point, that cell receives the current tick as its
+value. Then, every other tick (sweep direction alternating), every cell
+inspects \emph{only} its six face neighbors and copies the greatest
+neighbor value if it exceeds its own:
 \begin{equation}
 v(x) \;\leftarrow\; \max\big(v(x),\; v(x \pm e_i)\big).
 \end{equation}
 No cell ever senses beyond its neighborhood, yet the values diffuse as
 waves that in finite time reach every cell of the $L^3$ grid --- global
 coverage achieved purely by local moves, in lockstep with the CA tick.
+
+Rendered as faint dust over a sparse sample, the \emph{hue} encodes
+\emph{which expansion wave} delivered the value --- one distinct,
+coherent colour per breathing cycle,
+\begin{equation}
+\mathrm{hue} \;=\; \Bigl\lfloor \frac{v}{T_{\mathrm{half}}} \Bigr\rfloor
+\cdot \varphi \;\bmod\; 1,
+\qquad \varphi = \tfrac{1+\sqrt5}{2},
+\end{equation}
+where $T_{\mathrm{half}}$ is the tick length of one expansion phase of
+the pulse --- while the \emph{brightness} encodes how recently the value
+arrived, glowing for a bounded youth window and then settling to a dim
+floor.
 
 \end{document}

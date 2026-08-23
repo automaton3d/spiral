@@ -20,7 +20,9 @@
  *     total order makes the winner unique and scan-order
  *     independent; changing any w (or the seed, key W) elects a
  *     different surface point.  The winner BECOMES the momentum
- *     vector m — the rotation axis of layer 3.
+ *     vector m — the rotation axis of layer 3.  On screen the arrow
+ *     ends on a faint frozen bubble at |m|: the wavefront exactly as
+ *     it stood at the harvest instant.
  *
  *  3) THE HELIX (direction consumer)
  *     As soon as m exists, the classic Bresenham helix walker starts
@@ -37,18 +39,21 @@
  *     its own cell of a second value grid; a copy-the-greater-
  *     neighbour diffusion then carries these monotonic values across
  *     the ENTIRE lattice through purely local moves.  Rendered as a
- *     faint 1-px dust: hue = which wave arrived last, brightness =
- *     how recently.  Lowest-priority layer, drawn first.
+ *     faint 1-px dust: hue = which EXPANSION WAVE arrived last (one
+ *     distinct colour per breathing cycle), brightness = how
+ *     recently.  Lowest-priority layer, drawn first.
  *
  *  Controls:
- *    LMB drag   — orbit camera (yaw / pitch)
+ *    LMB drag   — orbit camera (yaw / pitch); returns to perspective
  *    RMB drag   — pan
  *    WHEEL      — zoom
  *    1 .. 5     — simulation steps per frame
  *    SPACE      — pause / resume
  *    A          — toggle auto-rotation
  *    W          — bump w seed and re-elect m immediately
- *    X          — toggle broadcast dust
+ *    D          — toggle broadcast dust
+ *    X Y Z      — orthographic views along the X / Y / Z axes
+ *    I          — orthographic isometric view
  *    S          — toggle analytic wavefront sphere
  *    C          — toggle sampled active cells
  *    B          — toggle spiral arm voxels
@@ -81,6 +86,7 @@ static bool show_cells   = true;
 static bool show_arm     = true;
 static bool show_cast    = true;
 static bool paused       = false;
+static bool ortho_view   = false;   /* true = parallel (orthographic) projection */
 static int  steps_pp     = 1;
 
 /* ================================================================
@@ -175,7 +181,7 @@ static void proj_point(float wx, float wy, float wz, int W, int H,
     float dz = cam_dist + z2;
     if (dz < 0.5f) dz = 0.5f;           /* near clip */
     float f = (float)H * 1.5f;
-    float s = f / dz;
+    float s = ortho_view ? f / cam_dist : f / dz;
 
     *px = (float)W * 0.5f + pan_x + x1 * s;
     *py = (float)H * 0.5f - pan_y - y2 * s;
@@ -183,32 +189,70 @@ static void proj_point(float wx, float wy, float wz, int W, int H,
 }
 
 /* ================================================================
- * Wireframe helpers
+ * Lattice boundary point counts
  * ================================================================ */
-static void draw_circle(SDL_Renderer *ren, int W, int H,
-                        float cx, float cy, float cz,
-                        float r, Uint8 cr, Uint8 cg, Uint8 cb) {
-    int nseg = 80;
-    float prev_x = 0, prev_y = 0, prev_d = 0;
-    SDL_SetRenderDrawColor(ren, cr, cg, cb, 180);
+#define BOUND_PTS 1800
 
-    for (int i = 0; i <= nseg; i++) {
-        float a = TAU * (float)i / (float)nseg;
-        float wx = cx + r * cosf(a);
-        float wy = cy + r * sinf(a);
-        float px, py, d;
-        proj_point(wx, wy, cz, W, H, &px, &py, &d);
-        if (i > 0 && d < cam_dist && prev_d < cam_dist) {
-            SDL_RenderLine(ren, prev_x, prev_y, px, py);
-        }
-        prev_x = px; prev_y = py; prev_d = d;
-    }
+static float g_bound_depth[BOUND_PTS];
+
+static int cmp_bound_depth(const void *a, const void *b) {
+    int ia = *(const int *)a, ib = *(const int *)b;
+    return (g_bound_depth[ia] < g_bound_depth[ib]) -
+           (g_bound_depth[ia] > g_bound_depth[ib]);   /* far -> near */
 }
 
-static void draw_sphere_frames(SDL_Renderer *ren, int W, int H, float R) {
-    draw_circle(ren, W, H, 0, 0, 0, R, 60, 65, 80);
-    draw_circle(ren, W, H, 0, 0, 0, R, 50, 55, 70);
-    draw_circle(ren, W, H, 0, 0, 0, R, 55, 60, 75);
+/* ================================================================
+ * Wireframe helpers
+ * ================================================================ */
+static void draw_boundary(SDL_Renderer *ren, int W, int H, float R) {
+    /* Faint point-cloud sphere at EXACTLY r = R_MAX = L/2, rendered
+     * with the same projection as every other sphere — so nothing
+     * can ever LOOK bigger than the lattice: the pulsing wavefront
+     * (<= 0.96 R_MAX) and the frozen harvest bubble (|m| <= 0.95
+     * R_MAX) always stay visibly inscribed inside it. */
+    static bool  seeded = false;
+    static float ux[BOUND_PTS], uy[BOUND_PTS], uz[BOUND_PTS];
+    static float sx[BOUND_PTS], sy[BOUND_PTS];
+    static int   order[BOUND_PTS];
+
+    if (!seeded) {
+        const float GA = 3.14159265358979f * (3.0f - sqrtf(5.0f));
+        for (int i = 0; i < BOUND_PTS; i++) {
+            float t  = ((float)i + 0.5f) / (float)BOUND_PTS;
+            uy[i]    = 1.0f - 2.0f * t;
+            float rr = sqrtf(1.0f - uy[i] * uy[i]);
+            float ph = GA * (float)i;
+            ux[i]    = cosf(ph) * rr;
+            uz[i]    = sinf(ph) * rr;
+        }
+        seeded = true;
+    }
+
+    const float f   = (float)H * 1.5f;
+    const float cyw = cosf(cam_yaw),   syw = sinf(cam_yaw);
+    const float cpw = cosf(cam_pitch), spw = sinf(cam_pitch);
+
+    for (int i = 0; i < BOUND_PTS; i++) {
+        float wx = ux[i] * R, wy = uy[i] * R, wz = uz[i] * R;
+        float x1 = cyw * wx - syw * wz;
+        float z1 = syw * wx + cyw * wz;
+        float y2 = cpw * wy - spw * z1;
+        float z2 = spw * wy + cpw * z1;
+        float dz = cam_dist + z2;
+        if (dz < 0.5f) dz = 0.5f;
+        g_bound_depth[i] = dz;
+        float s = ortho_view ? f / cam_dist : f / dz;
+        sx[i] = (float)W * 0.5f + pan_x + x1 * s;
+        sy[i] = (float)H * 0.5f - pan_y - y2 * s;
+        order[i] = i;
+    }
+    qsort(order, BOUND_PTS, sizeof(int), cmp_bound_depth);
+
+    SDL_SetRenderDrawColor(ren, 95, 100, 115, 70);
+    for (int oi = 0; oi < BOUND_PTS; oi++) {
+        int i = order[oi];
+        SDL_RenderPoint(ren, sx[i], sy[i]);
+    }
 }
 
 static void draw_world_axes(SDL_Renderer *ren, int W, int H, float R) {
@@ -292,7 +336,7 @@ static void draw_wave_sphere(SDL_Renderer *ren, int W, int H, float R) {
         float dz = cam_dist + z2;
         if (dz < 0.5f) dz = 0.5f;
         g_wav_depth[i] = dz;
-        float s = f / dz;
+        float s = ortho_view ? f / cam_dist : f / dz;
         sx[i] = (float)W * 0.5f + pan_x + x1 * s;
         sy[i] = (float)H * 0.5f - pan_y - y2 * s;
         order[i] = i;
@@ -307,6 +351,68 @@ static void draw_wave_sphere(SDL_Renderer *ren, int W, int H, float R) {
         if (ft < 0.0f) ft = 0.0f; else if (ft > 1.0f) ft = 1.0f;
         Uint8 alpha = (Uint8)(205.0f - 135.0f * ft);
         SDL_SetRenderDrawColor(ren, 150, 235, 170, alpha);
+        SDL_RenderPoint(ren, sx[i], sy[i]);
+    }
+}
+
+/* ================================================================
+ * Frozen harvest bubble — faint point-cloud wireframe at the radius
+ * |m| of the expansion limit where the current momentum was elected.
+ * The cyan arrow always ends ON this bubble, so the harvest geometry
+ * stays readable while the live wavefront keeps breathing.
+ * ================================================================ */
+#define GHOST_PTS 1400
+
+static float g_ghost_depth[GHOST_PTS];
+
+static int cmp_ghost_depth(const void *a, const void *b) {
+    int ia = *(const int *)a, ib = *(const int *)b;
+    return (g_ghost_depth[ia] < g_ghost_depth[ib]) -
+           (g_ghost_depth[ia] > g_ghost_depth[ib]);   /* far -> near */
+}
+
+static void draw_ghost_sphere(SDL_Renderer *ren, int W, int H, float R) {
+    static bool  seeded = false;
+    static float ux[GHOST_PTS], uy[GHOST_PTS], uz[GHOST_PTS];
+    static float sx[GHOST_PTS], sy[GHOST_PTS];
+    static int   order[GHOST_PTS];
+
+    if (!seeded) {
+        const float GA = 3.14159265358979f * (3.0f - sqrtf(5.0f));
+        for (int i = 0; i < GHOST_PTS; i++) {
+            float t  = ((float)i + 0.5f) / (float)GHOST_PTS;
+            uy[i]    = 1.0f - 2.0f * t;
+            float rr = sqrtf(1.0f - uy[i] * uy[i]);
+            float ph = GA * (float)i;
+            ux[i]    = cosf(ph) * rr;
+            uz[i]    = sinf(ph) * rr;
+        }
+        seeded = true;
+    }
+
+    const float f   = (float)H * 1.5f;
+    const float cyw = cosf(cam_yaw),   syw = sinf(cam_yaw);
+    const float cpw = cosf(cam_pitch), spw = sinf(cam_pitch);
+
+    for (int i = 0; i < GHOST_PTS; i++) {
+        float wx = ux[i] * R, wy = uy[i] * R, wz = uz[i] * R;
+        float x1 = cyw * wx - syw * wz;
+        float z1 = syw * wx + cyw * wz;
+        float y2 = cpw * wy - spw * z1;
+        float z2 = spw * wy + cpw * z1;
+        float dz = cam_dist + z2;
+        if (dz < 0.5f) dz = 0.5f;
+        g_ghost_depth[i] = dz;
+        float s = ortho_view ? f / cam_dist : f / dz;
+        sx[i] = (float)W * 0.5f + pan_x + x1 * s;
+        sy[i] = (float)H * 0.5f - pan_y - y2 * s;
+        order[i] = i;
+    }
+    qsort(order, GHOST_PTS, sizeof(int), cmp_ghost_depth);
+
+    SDL_SetRenderDrawColor(ren, 70, 170, 185, 80);
+    for (int oi = 0; oi < GHOST_PTS; oi++) {
+        int i = order[oi];
         SDL_RenderPoint(ren, sx[i], sy[i]);
     }
 }
@@ -359,8 +465,12 @@ static int draw_active_cells(SDL_Renderer *ren, int W, int H) {
  * payload (score << 24) | code, score = hash((w + seed) mod 9L,
  * code); the maximum diffuses by "adopt the greatest neighbour".
  * code occupies the low bits, so the total order is strict: one
- * unique winner, independent of scan order.  The winner becomes
- * the momentum vector m — the spiral's rotation axis.
+ * unique winner, independent of scan order.  The winning SEEDED
+ * cell is identified at sowing time — the diffusion flood merely
+ * transports the news and must never redefine the winner (its
+ * copies reach low-index cells, which would corrupt an index
+ * scan).  The winner becomes the momentum vector m — the spiral's
+ * rotation axis.
  * ================================================================ */
 #define CODE_BITS 24
 #define CODE_MASK ((1ull << CODE_BITS) - 1)
@@ -373,6 +483,9 @@ static int elec_left       = 0;          /* passes remaining  */
 static int has_m           = 0;
 static int elec_code       = -1;
 static int mom_x = 0, mom_y = 0, mom_z = 0;
+static int mom_norm        = 0;   /* |m| frozen at the harvest instant */
+static long long elec_best_i = -1;       /* seeded cell with max payload */
+static unsigned long long elec_best_p = 0;
 
 static unsigned int w_base_of(int x, int y, int z) {
     unsigned int h = (unsigned int)x * 73856093u
@@ -394,6 +507,8 @@ static unsigned int elec_score(unsigned int weff, unsigned long long code) {
 
 static void election_start(void) {
     long long i = 0;
+    elec_best_i = -1;
+    elec_best_p = 0;
     for (int x = 0; x < L; x++)
     for (int y = 0; y < L; y++)
     for (int z = 0; z < L; z++, i++) {
@@ -401,8 +516,16 @@ static void election_start(void) {
         unsigned long long code = (unsigned long long)i;
         unsigned int weff =
             ((unsigned int)grid[x][y][z].w + wseed) % (9u * (unsigned int)L);
-        bid[i] = ((unsigned long long)elec_score(weff, code) << CODE_BITS)
-                 | code;
+        unsigned long long payload =
+            ((unsigned long long)elec_score(weff, code) << CODE_BITS)
+            | code;
+        bid[i] = payload;
+        /* identify the TRUE winner now: the seeded cell with the
+         * greatest payload (strict total order => unique) */
+        if (payload > elec_best_p) {
+            elec_best_p = payload;
+            elec_best_i = i;
+        }
     }
     elec_left = ELEC_PASSES_TOTAL;
 }
@@ -446,24 +569,21 @@ static void election_advance(void) {
         elec_diffuse_pass((pass_idx + j) & 1);
     elec_left -= k;
 
-    if (elec_left == 0) {
-        unsigned long long best = 0;
-        long long bi = -1;
-        const long long total = (long long)L * L * L;
-        for (long long i = 0; i < total; i++) {
-            if (bid[i] > best) { best = bid[i]; bi = i; }
-        }
-        if (bi >= 0) {
-            int z = (int)(bi % L);
-            int y = (int)((bi / L) % L);
-            int x = (int)(bi / ((long long)L * L));
-            mom_x = x - MID;
-            mom_y = y - MID;
-            mom_z = z - MID;
-            elec_code = (int)(best & CODE_MASK);
-            has_m = 1;
-            pending_apply = 1;   /* hand the new direction over */
-        }
+    if (elec_left == 0 && elec_best_i >= 0) {
+        /* decode the SEEDED winner — never a flood copy */
+        long long bi = elec_best_i;
+        int z = (int)(bi % L);
+        int y = (int)((bi / L) % L);
+        int x = (int)(bi / ((long long)L * L));
+        mom_x = x - MID;
+        mom_y = y - MID;
+        mom_z = z - MID;
+        mom_norm = isqrt(mom_x * mom_x +
+                         mom_y * mom_y +
+                         mom_z * mom_z);
+        elec_code = (int)(elec_best_p & CODE_MASK);
+        has_m = 1;
+        pending_apply = 1;   /* hand the new direction over */
     }
 }
 
@@ -492,17 +612,25 @@ static void orchestrate(void) {
  * neighbour pass then carries the monotonic values outward until
  * every cell of the lattice has been reached — global coverage by
  * purely local moves.  Visualised as faint 1-px dust over a sparse
- * sample: hue encodes WHICH value arrived last (golden-ratio walk,
- * different colour per wave), brightness how recently.
+ * sample: hue encodes WHICH EXPANSION WAVE delivered the value (one
+ * distinct colour per breathing cycle), brightness how recently.
  * ================================================================ */
 #define BCAST_EVERY   2      /* diffusion pass cadence (ticks)       */
 #define BCAST_SSTRIDE 12     /* visual sampling stride               */
 #define BG_N          (((L) + (BCAST_SSTRIDE) - 1) / (BCAST_SSTRIDE))
 #define BCAST_NSAMP   (BG_N * BG_N * BG_N)
-#define BCAST_YOUNG   36     /* ticks a fresh arrival stays glowing  */
+#define BCAST_YOUNG   90     /* ticks a fresh arrival stays glowing  */
 
 static unsigned int *bgrid = NULL;   /* L^3 broadcast values, 0 = none */
 static float bsamp_x[BCAST_NSAMP], bsamp_y[BCAST_NSAMP], bsamp_z[BCAST_NSAMP];
+
+/* length of one expansion (half) phase of the breathing pulse, in
+ * ticks — the granularity of "which wave arrived last" */
+static unsigned int bcast_wave_ticks(void) {
+    const unsigned int span =
+        (unsigned int)R_MAX * R_MAX * 92u / 100u;
+    return span / (unsigned int)PULSE_STEP + 1u;
+}
 
 static void hsv2rgb(float h, float s, float v,
                     float *R, float *G, float *B) {
@@ -583,7 +711,11 @@ static void draw_broadcast(SDL_Renderer *ren, int W, int H) {
         float px, py, pd;
         proj_point(bsamp_x[i], bsamp_y[i], bsamp_z[i], W, H, &px, &py, &pd);
 
-        float h = fmodf((float)v * 0.61803398875f, 1.0f);
+        /* hue = WHICH EXPANSION WAVE delivered the value (one distinct,
+         * coherent colour per breathing cycle), so the dust visibly
+         * recolours every time a fresh wave floods the lattice */
+        unsigned int wave = v / bcast_wave_ticks();
+        float h = fmodf((float)wave * 0.61803398875f, 1.0f);
         float r, g, b;
         hsv2rgb(h, 0.55f, 1.0f, &r, &g, &b);
 
@@ -591,7 +723,7 @@ static void draw_broadcast(SDL_Renderer *ren, int W, int H) {
         float fr = 1.0f - (float)age / (float)BCAST_YOUNG;
         if (fr < 0.0f) fr = 0.0f;
         if (fr > 1.0f) fr = 1.0f;
-        float base = 42.0f + 100.0f * fr;
+        float base = 55.0f + 125.0f * fr;
 
         float ft = (pd - (cam_dist - RD)) / (2.0f * RD);
         if (ft < 0.0f) ft = 0.0f; else if (ft > 1.0f) ft = 1.0f;
@@ -707,7 +839,8 @@ static void draw_arm(SDL_Renderer *ren, int W, int H) {
                 float z2v = sp * pwy + cp * z1v;
                 float dz  = cam_dist + z2v;
                 if (dz < 0.5f) dz = 0.5f;
-                float sc  = (float)H * 1.5f / dz;
+                float sc  = ortho_view ? (float)H * 1.5f / cam_dist
+                                       : (float)H * 1.5f / dz;
                 vox_verts[nv].position.x = (float)W * 0.5f + pan_x + x1v * sc;
                 vox_verts[nv].position.y = (float)H * 0.5f - pan_y - y2v * sc;
                 vox_verts[nv].color       = col;
@@ -742,11 +875,15 @@ static void render(SDL_Renderer *ren, int W, int H) {
     int cur_r = isqrt((int)pulse_r2);
 
     if (show_axes) {
-        draw_sphere_frames(ren, W, H, (float)RADIUS);
+        draw_boundary(ren, W, H, (float)R_MAX);
         draw_world_axes(ren, W, H, (float)RADIUS);
     }
     if (show_sphere && cur_r > 0)
         draw_wave_sphere(ren, W, H, (float)cur_r);
+
+    /* frozen bubble at the harvest radius: the arrow tip lies ON it */
+    if (show_sphere && has_m && mom_norm > 0)
+        draw_ghost_sphere(ren, W, H, (float)mom_norm);
 
     int act = 0;
     if (show_cells) act = draw_active_cells(ren, W, H);
@@ -779,8 +916,10 @@ static void render(SDL_Renderer *ren, int W, int H) {
         draw_text(ren, "LMB ROTATE  RMB PAN  WHEEL ZOOM  SPACE PAUSE  1-5 SPEED  ESC QUIT",
                   10, 10);
         SDL_SetRenderDrawColor(ren, 170, 170, 170, 255);
-        draw_text(ren, "A AUTO  W WSEED  X CAST  S SPHERE  C CELLS  B ARM  G AXES  R RESET",
+        draw_text(ren, "A AUTO  W WSEED  D CAST  S SPHERE  C CELLS  B ARM  G AXES  R RESET",
                   10, 26);
+        SDL_SetRenderDrawColor(ren, 150, 200, 255, 255);
+        draw_text(ren, "X Y Z I ORTHO VIEWS - DRAG FOR PERSPECTIVE", 10, 42);
 
         snprintf(l1, sizeof(l1),
                  "AXIS %d %d %d  M %d %d %d  NORM %.3f",
@@ -807,17 +946,17 @@ static void render(SDL_Renderer *ren, int W, int H) {
                  spiral_n, MAX_SPIRAL_PTS, cur_r, tick);
 
         SDL_SetRenderDrawColor(ren, 120, 220, 220, 255);
-        draw_text(ren, l1, 10, 42);
+        draw_text(ren, l1, 10, 58);
         SDL_SetRenderDrawColor(ren, 180, 180, 180, 255);
-        draw_text(ren, l2, 10, 58);
+        draw_text(ren, l2, 10, 74);
         SDL_SetRenderDrawColor(ren, 255, 140, 255, 255);
-        draw_text(ren, l3, 10, 74);
+        draw_text(ren, l3, 10, 90);
         SDL_SetRenderDrawColor(ren, 120, 255, 160, 255);
-        draw_text(ren, l4, 10, 90);
+        draw_text(ren, l4, 10, 106);
 
         if (paused) {
             SDL_SetRenderDrawColor(ren, 255, 220, 80, 255);
-            draw_text(ren, "PAUSED", 10, 106);
+            draw_text(ren, "PAUSED", 10, 122);
         }
     }
 
@@ -858,6 +997,7 @@ static void handle(SDL_Event *e) {
         if (dragging_orbit) {
             float dx = e->motion.x - last_x;
             float dy = e->motion.y - last_y;
+            ortho_view = false;   /* manual orbit returns to perspective */
             cam_yaw   -= dx * 0.008f;
             cam_pitch += dy * 0.008f;
             if (cam_pitch >  1.5f) cam_pitch =  1.5f;
@@ -885,7 +1025,11 @@ static void handle(SDL_Event *e) {
         case SDLK_SPACE:  paused = !paused; break;
         case SDLK_A:      auto_rotate = !auto_rotate; break;
         case SDLK_W:      wseed++; election_start(); break;
-        case SDLK_X:      show_cast = !show_cast; break;
+        case SDLK_D:      show_cast = !show_cast; break;
+        case SDLK_X:      cam_yaw = -TAU / 4.0f; cam_pitch = 0.0f; ortho_view = true; break;
+        case SDLK_Y:      cam_yaw = 0.0f; cam_pitch = TAU / 4.0f; ortho_view = true; break;
+        case SDLK_Z:      cam_yaw = 0.0f; cam_pitch = 0.0f; ortho_view = true; break;
+        case SDLK_I:      cam_yaw = TAU / 8.0f; cam_pitch = atanf(1.0f / sqrtf(2.0f)); ortho_view = true; break;
         case SDLK_S:      show_sphere = !show_sphere; break;
         case SDLK_C:      show_cells = !show_cells; break;
         case SDLK_B:      show_arm = !show_arm; break;
@@ -895,6 +1039,7 @@ static void handle(SDL_Event *e) {
             cam_pitch = -0.5f;
             cam_dist  = 4.4f * (float)RADIUS;
             pan_x = pan_y = 0.0f;
+            ortho_view = false;
             break;
         case SDLK_1: steps_pp = 1; break;
         case SDLK_2: steps_pp = 2; break;
