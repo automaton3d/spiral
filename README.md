@@ -1,130 +1,113 @@
-\# Espiral emergente em torno de um eixo arbitrário
+# Espiral emergente em torno de um eixo arbitrário
 
+Implementação consolidada do automato celular que gera uma hélice cilíndrica
+em torno de um eixo inteiro arbitrário. A direção de rotação não é imposta:
+é **eleita pelo próprio CA** a partir do campo `w` no instante em que a onda
+pulsante atinge seu limite de expansão.
 
+A descrição matemática detalhada está em `ca_essence.tex` / `ca_essence.pdf`.
 
-Versão generalizada de `spiral.c` / `spiral.h`: o helicoide cilíndrico emerge
+## Arquivos principais
 
-em torno de qualquer eixo `AXIS = (ax, ay, az)` com `|AXIS| = L/2`, e não mais
+| arquivo | função |
+|---|---|
+| `spiral.h` | constantes, tipos (`Cell`, `SpiralPt`) e protótipos do core |
+| `spiral.c` | core do CA: onda pulsante (`pulse_step`) e caminhante helicoidal (`spiral_step`) |
+| `spiral_auto.c` | visualizador 3D interativo (SDL3), orquestração e eleição do eixo |
+| `build_3d.bat` | atalho para compilar `spiral_auto.exe` com MSVC/nmake |
+| `Makefile.nmake` | build Windows (MSVC) para `spiral_auto.exe` |
+| `SDL3.dll` | biblioteca SDL3 pré-compilada para Windows |
+| `ca_essence.tex` / `ca_essence.pdf` | manuscrito com a matemática do automato |
 
-apenas em torno de `+z`.
+## Ideia central
 
+1. **Respiração isotrópica:** uma onda triangular em `r²` aciona uma casca
+   esférica (`active = 1`) que expande e contrai.
+2. **Eleição da direção:** no pico de expansão, cada célula ativa propaga o
+   maior *payload* `(score << 24) | code` entre seus 6 vizinhos faciais. A
+   célula vencedora define o vetor `m` (eixo de rotação).
+3. **Hélice:** o caminhante de Bresenham 3D traça a espiral em torno de `m`,
+   reescalado para `|m| = L/2`, usando apenas `+`, `-`, `<<` e comparações
+   (sem multiplicação, divisão, float ou trigonométricas no laço do CA).
+4. **Broadcast (ant view):** cada ponto da espiral carimba seu `tick` numa
+   segunda grade; uma difusão local leva esse valor a toda a rede, gerando
+   o "pó" colorido por ciclo de respiração.
 
+## Compilar
 
-\## Ideia central (sem multiplicação em tempo de execução)
+### Windows — MSVC
 
-
-
-Para um ponto `u = v - P` (com `P` perpendicular a `AXIS`, `|P| = R\_CYL`,
-
-deslocamento da linha do cilindro em relação ao centro da rede):
-
-
-
+```cmd
+nmake /f Makefile.nmake
+rem ou
+build_3d.bat
 ```
 
-dist²(u, eixo) = |u × AXIS|² / |AXIS|²
+Requer SDL3 instalado em `E:\vcpkg\installed\x64-windows` (veja `SDL_INC` e
+`SDL_LIB` no `Makefile.nmake` e ajuste se necessário).
 
-```
+### Linux / macOS — GCC
 
-
-
-Logo o caminhante compara `E = |c|²` (com `c = u × AXIS`) contra
-
-`TGT = R\_CYL² · |AXIS|²` — nenhuma divisão, nenhum float.
-
-
-
-O truque que elimina a multiplicação é a atualização incremental em dois níveis
-
-(generalização exata da "soma de ímpares" `2·dx + 1`):
-
-
-
-| grandeza | atualização por passo `m` | custo |
-
-|---|---|---|
-
-| `c = u × AXIS` | `c += D\[m]`, com `D\[m] = e\_m × AXIS` constante | soma |
-
-| `E = |c|²` | `E += G\[m]` | soma |
-
-| `G\[k]` | `G\[k] += K\[m]\[k]`, `K\[m]\[k] = 2·D\_m·D\_k` constante | soma |
-
-| `q2 = |v|²` | `q2 ± (2·v\_i ± 1)` | shift + soma |
-
-
-
-`D\[m]`, `K\[m]\[k]`, `TGT`, `TOL` e `P` são calculados \*\*uma única vez\*\* em
-
-`spiral\_set\_axis()` / `spiral\_init()` (tempo de inicialização, exatamente como
-
-as constantes `2·dx+1` da versão antiga). O laço da CA usa só `+`, `-`, `<<`
-
-e comparações, em vizinhança local de 6 células.
-
-
-
-\## Escolha do passo
-
-
-
-\- \*\*Bresenham de passo\*\*: `climb\_total = |ax|+|ay|+|az|` passos de subida
-
-&#x20; distribuídos entre `orbit\_total` passos orbitais.
-
-\- \*\*Passo orbital\*\*: entre os 6 vizinhos, mantém-se apenas os de sentido de
-
-&#x20; rotação correto (projeção tangencial `t = AXIS × u = -c`, cujas componentes
-
-&#x20; já são `-c\_x, -c\_y, -c\_z` — de graça); entre esses, escolhe-se o de maior
-
-&#x20; avanço angular dentro da banda radial `|E' - TGT| ≤ TOL`; fora da banda,
-
-&#x20; o de menor erro radial.
-
-\- \*\*Passo de subida\*\*: DDA multidimensional ao longo de `AXIS`
-
-&#x20; (`dda\[i] += |a\_i|`, maior vence, `dda\[i] -= |a|₁`), seguindo o eixo inclinado
-
-&#x20; com moves cardinais.
-
-\- \*\*Fim\*\*: quando `q2 ≥ RADIUS²`, isto é `r = 0 → L/2` (θ: 0 → π).
-
-
-
-\## Compilar e rodar
-
-
+O visualizador precisa do SDL3. Com o SDL3 e `pkg-config` disponíveis:
 
 ```sh
-
-\# com SDL3 (visualização)
-
-gcc -O2 spiral.c -o spiral $(pkg-config --cflags --libs sdl3) -lm
-
-./spiral 3 -2 5        # eixo arbitrário; o vetor é reescalado para |AXIS| = L/2
-
-
-
-\# teste geométrico headless
-
-gcc -DNO\_SDL -O2 spiral.c test\_axis.c -o test\_axis -lm \&\& ./test\_axis
-
+gcc -O2 spiral_auto.c spiral.c -o spiral_auto $(pkg-config --cflags --libs sdl3) -lm
+./spiral_auto
 ```
 
+Para compilar apenas o core sem SDL (objeto de biblioteca):
 
+```sh
+gcc -DNO_SDL -O2 -c spiral.c -o spiral_nosdl.o
+```
 
-\## Resultado do teste (L = 221, R\_CYL = 20, RADIUS = 108)
+## Executar
 
+```sh
+./spiral_auto
+```
 
+Janela padrão: 1024×768, redimensionável.
 
-Para eixos `(0,0,1)`, `(1,1,1)`, `(3,-2,5)`, `(-7,4,1)`, `(1,2,0)`, `(2,3,6)`
+## Controles
 
-a distância ao eixo do cilindro fica em `18.1 … 22.0` (alvo 20, erro ≤ \~2
+| tecla / mouse | ação |
+|---|---|
+| **LMB** + arrastar | orbitar câmera (perspectiva) |
+| **RMB** + arrastar | pan |
+| **wheel** | zoom |
+| **1 … 5** | passos de simulação por frame (1, 2, 4, 8, 16) |
+| **Espaço** | pausar / continuar |
+| **A** | ligar/desligar rotação automática |
+| **W** | incrementar `wseed` e re-eleger o eixo imediatamente |
+| **D** | ligar/desligar *broadcast dust* |
+| **S** | ligar/desligar esfera de onda analítica |
+| **C** | ligar/desligar amostra das células ativas |
+| **B** | ligar/desligar braço da espiral (voxels) |
+| **G** | ligar/desligar eixos e esfera delimitadora |
+| **X / Y / Z** | vista ortográfica ao longo do eixo correspondente |
+| **I** | vista isométrica ortográfica |
+| **R** | resetar câmera |
+| **ESC** | sair |
 
-células, limite de quantização da rede), o raio final chega a `r ≈ 108 = L/2`
+## Teste geométrico headless
 
-e o braço completa ao menos uma volta (θ ≥ 2π de fase orbital) em todos os casos.
+O arquivo `test_axis.c` (presente na branch `devin/arbitrary-axis`) pode ser
+usado para validar o core sem GUI:
 
+```sh
+git show origin/devin/arbitrary-axis:test_axis.c > test_axis.c
+gcc -DNO_SDL -O2 spiral.c test_axis.c -o test_axis -lm
+./test_axis
+```
 
+A saída reporta, para vários eixos, o raio do cilindro aproximado, o raio
+final e o ângulo total percorrido.
 
+## Estado atual
+
+- Core de eixo arbitrário funcional (validado com `test_axis.c`).
+- Visualizador 3D com eleição automática do eixo, broadcast dust e vistas
+  ortográficas X/Y/Z/I implementados.
+- Build Linux/SDL3 depende de SDL3 instalado; não há `Makefile` GCC no
+  momento.
