@@ -50,6 +50,18 @@ static long long TOL;                  /* radial band ~ +/-1 cell      */
 static int absa[3];                    /* |ax|,|ay|,|az|               */
 static int climb_total;                /* |ax|+|ay|+|az| (DDA period)  */
 static int orbit_total;                /* CYL_CIRC                     */
+static int period_total;               /* climb + orbit (Bresenham)    */
+
+/* ---- Frontier BFS buffers (packed x<<16 | y<<8 | z) ---- */
+#define R2_MAX (3 * MID * MID)
+static unsigned int front[L * L * L];
+static unsigned int next[L * L * L];
+static int front_n = 0;
+
+/* ---- r2 buckets for O(active-shell) updates ---- */
+static int ring_head[R2_MAX + 1];
+static int ring_next[L * L * L];
+static int prev_kmin = 1, prev_kmax = 0;
 
 /* ---- runtime walker state (integers only) ---- */
 static int tip_x, tip_y, tip_z;        /* lattice position             */
@@ -126,6 +138,7 @@ void spiral_set_axis(int ax, int ay, int az) {
         }
         orbit_total = (int)floor((double)R_CYL * acc + 0.5);
         if (orbit_total < CYL_CIRC) orbit_total = CYL_CIRC;
+        period_total = orbit_total + climb_total;
     }
 
 
@@ -175,6 +188,20 @@ void init(void) {
     /* seed center */
     grid[MID][MID][MID].r2 = 0;
     grid[MID][MID][MID].r  = 0;
+
+    /* start wavefront BFS from the centre */
+    front[0] = ((unsigned)MID << 16) | ((unsigned)MID << 8) | (unsigned)MID;
+    front_n  = 1;
+
+    /* r2 buckets: the centre has r2 = 0 */
+    memset(ring_head, -1, sizeof(ring_head));
+    {
+        Cell *base = &grid[0][0][0];
+        int centre_idx = (int)(&grid[MID][MID][MID] - base);
+        ring_next[centre_idx] = -1;
+        ring_head[0] = centre_idx;
+    }
+    prev_kmin = 1; prev_kmax = 0;
 
     /* init walker */
     spiral_init();
@@ -250,15 +277,21 @@ static const int ddy[6] = {0,  0, 1, -1, 0,  0};
 static const int ddz[6] = {0,  0, 0,  0, 1, -1};
 
 static void pulse_update_wavefront(void) {
-    for (int x = 0; x < L; x++)
-    for (int y = 0; y < L; y++)
-    for (int z = 0; z < L; z++) {
-        grid_next[x][y][z].r2 = grid[x][y][z].r2;
-    }
+    if (front_n == 0) return;                  /* wavefront has saturated */
 
-    for (int x = 0; x < L; x++)
-    for (int y = 0; y < L; y++)
-    for (int z = 0; z < L; z++) {
+    /* snapshot only the r2 field into grid_next */
+    Cell *g = &grid[0][0][0];
+    Cell *h = &grid_next[0][0][0];
+    for (int idx = 0; idx < L * L * L; idx++)
+        h[idx].r2 = g[idx].r2;
+
+    int next_n = 0;
+    for (int i = 0; i < front_n; i++) {
+        unsigned int p = front[i];
+        int x = (int)(p >> 16);
+        int y = (int)((p >> 8) & 0xFF);
+        int z = (int)(p & 0xFF);
+
         if (grid[x][y][z].r2 == INF_R2) continue;
 
         unsigned int ax = (x > MID) ? (unsigned int)(x - MID)
@@ -284,9 +317,15 @@ static void pulse_update_wavefront(void) {
             unsigned int new_r2 = grid[x][y][z].r2 + diff;
             if (new_r2 < grid_next[nx][ny][nz].r2) {
                 grid_next[nx][ny][nz].r2 = new_r2;
+                next[next_n++] =
+                    ((unsigned int)nx << 16) |
+                    ((unsigned int)ny << 8)  |
+                    (unsigned int)nz;
             }
         }
     }
+    memcpy(front, next, sizeof(unsigned int) * next_n);
+    front_n = next_n;
 }
 
 /* ==========================================================
@@ -296,31 +335,42 @@ void pulse_step(void) {
     pulse_update_wavefront();
     grid_next[MID][MID][MID].r2 = 0;
 
-    for (int x = 0; x < L; x++)
-    for (int y = 0; y < L; y++)
-    for (int z = 0; z < L; z++) {
-        unsigned int old_r2 = grid[x][y][z].r2;
+    Cell *base = &grid[0][0][0];
+
+    /* copy-back the frontier cells and bucket newly reached ones by r2 */
+    for (int i = 0; i < front_n; i++) {
+        unsigned int p = front[i];
+        int x = (int)(p >> 16);
+        int y = (int)((p >> 8) & 0xFF);
+        int z = (int)(p & 0xFF);
+
+        Cell *c = &grid[x][y][z];
+        unsigned int old_r2 = c->r2;
         unsigned int new_r2 = grid_next[x][y][z].r2;
-        grid[x][y][z].r2 = new_r2;
+        c->r2 = new_r2;
         if (new_r2 != INF_R2 && old_r2 == INF_R2) {
-            grid[x][y][z].r = isqrt((int)new_r2);
+            c->r = isqrt((int)new_r2);
+            int idx = (int)(c - base);
+            ring_next[idx] = ring_head[(int)new_r2];
+            ring_head[(int)new_r2] = idx;
         }
     }
 
+    /* update only the active shell around pulse_r2 (O(active cells)) */
     unsigned int pulse_r2 = pulse_from_time((unsigned int)tick);
-    for (int x = 0; x < L; x++)
-    for (int y = 0; y < L; y++)
-    for (int z = 0; z < L; z++) {
-        unsigned int r2 = grid[x][y][z].r2;
-        if (r2 == INF_R2) {
-            grid[x][y][z].active = 0;
-        } else {
-            unsigned int delta = (r2 > pulse_r2)
-                               ? (r2 - pulse_r2)
-                               : (pulse_r2 - r2);
-            grid[x][y][z].active = (delta <= PULSE_TOLERANCE) ? 1 : 0;
-        }
+    int kmin = (pulse_r2 > 0) ? (int)(pulse_r2 - 1) : 0;
+    int kmax = (int)(pulse_r2 + 1);
+    if (kmax > R2_MAX) kmax = R2_MAX;
+
+    for (int k = prev_kmin; k <= prev_kmax; k++) {
+        for (int idx = ring_head[k]; idx != -1; idx = ring_next[idx])
+            base[idx].active = 0;
     }
+    for (int k = kmin; k <= kmax; k++) {
+        for (int idx = ring_head[k]; idx != -1; idx = ring_next[idx])
+            base[idx].active = 1;
+    }
+    prev_kmin = kmin; prev_kmax = kmax;
 }
 
 /* ==========================================================
@@ -377,11 +427,14 @@ static int move_ok(int m) {
 void spiral_step(void) {
     if (spiral_done) return;
 
-    int period = orbit_total + climb_total;
     int new_acc = tip_acc + climb_total;
     int do_climb = 0;
-    if (new_acc >= period) { new_acc -= period; do_climb = 1; }
+    if (new_acc >= period_total) { new_acc -= period_total; do_climb = 1; }
     tip_acc = new_acc;
+
+    /* precompute legality once per step */
+    int ok[6];
+    for (int m = 0; m < 6; m++) ok[m] = move_ok(m);
 
     int chosen = -1;
 
@@ -399,7 +452,7 @@ void spiral_step(void) {
         int sgn_neg = (i == 0) ? (axis_x < 0) : (i == 1) ? (axis_y < 0)
                                                           : (axis_z < 0);
         int m = (i << 1) + (sgn_neg ? 1 : 0);
-        if (move_ok(m)) chosen = m;
+        if (ok[m]) chosen = m;
         /* if blocked, fall through to an orbital choice below */
     }
 
@@ -419,7 +472,7 @@ void spiral_step(void) {
          * Ties and out-of-band situations fall back to minimum radial
          * error.  Only comparisons and additions are involved. */
         for (int m = 0; m < 6; m++) {
-            if (!move_ok(m)) continue;
+            if (!ok[m]) continue;
             if (t[m] <= 0) continue;                 /* wrong rotation sense */
             long long e = E + G[m] - TGT;
             if (e < 0) e = -e;
@@ -434,7 +487,7 @@ void spiral_step(void) {
 
         if (best < 0) {                              /* fallback: any move */
             for (int m = 0; m < 6; m++) {
-                if (!move_ok(m)) continue;
+                if (!ok[m]) continue;
                 long long e = E + G[m] - TGT;
                 if (e < 0) e = -e;
                 if (best < 0 || e < best_err) { best = m; best_err = e; }
