@@ -1061,14 +1061,12 @@ static void handle(SDL_Event *e) {
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
 
-    grid      = (Cell (*)[L][L])malloc(sizeof(Cell) * L * L * L);
-    grid_next = (Cell (*)[L][L])malloc(sizeof(Cell) * L * L * L);
-    if (!grid || !grid_next) {
-        puts("Out of memory (need about 260 MB for the grids)");
+    grid = (Cell (*)[L][L])malloc(sizeof(Cell) * L * L * L);
+    if (!grid) {
+        puts("Out of memory (need about 130 MB for the grid)");
         return 1;
     }
-    memset(grid,      0, sizeof(Cell) * L * L * L);
-    memset(grid_next, 0, sizeof(Cell) * L * L * L);
+    memset(grid, 0, sizeof(Cell) * L * L * L);
 
     /* election payload grid (ant-view tournament state) */
     bid = (unsigned long long *)calloc((size_t)L * L * L,
@@ -1183,7 +1181,6 @@ int main(int argc, char **argv) {
     SDL_Quit();
 
     free(grid);
-    free(grid_next);
     free(bid);
     free(bgrid);
     return 0;

@@ -11,7 +11,6 @@
 static void run(int ax, int ay, int az) {
     spiral_set_axis(ax, ay, az);
     memset(grid, 0, sizeof(Cell) * L * L * L);
-    memset(grid_next, 0, sizeof(Cell) * L * L * L);
     for (int x = 0; x < L; x++) for (int y = 0; y < L; y++) for (int z = 0; z < L; z++)
         grid[x][y][z].spin = 0;
     tick = 0;
@@ -83,9 +82,8 @@ static void run(int ax, int ay, int az) {
 }
 
 int main(void) {
-    grid      = malloc(sizeof(Cell) * L * L * L);
-    grid_next = malloc(sizeof(Cell) * L * L * L);
-    if (!grid || !grid_next) { printf("oom\n"); return 1; }
+    grid = malloc(sizeof(Cell) * L * L * L);
+    if (!grid) { printf("oom\n"); return 1; }
 
     run(0, 0, 1);
     run(0, 0, -1);
@@ -96,6 +94,6 @@ int main(void) {
     run(-7, 4, 1);
     run(1, 2, 0);
 
-    free(grid); free(grid_next);
+    free(grid);
     return 0;
 }

@@ -105,9 +105,8 @@ extern SpiralPt spiral_pts[];
 extern int spiral_n;
 extern int spiral_done;
 
-/* --- Grid pointers (heap-allocated) --- */
+/* --- Grid pointer (heap-allocated) --- */
 extern Cell (*grid)[L][L];
-extern Cell (*grid_next)[L][L];
 extern int tick;
 extern int axis_x, axis_y, axis_z;   /* rotation axis, |AXIS| = L/2 */
 
