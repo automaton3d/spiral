@@ -91,10 +91,11 @@
 typedef struct {
     int r;                /* integer radius from center */
     unsigned int r2;      /* Euclidean distance-squared (INF_R2 = unvisited) */
-    unsigned char active; /* 1 if on pulsating shell */
-    unsigned char spin;   /* 1 if on the spiral arm */
+    int link;             /* packed (x<<16|y<<8|z) for CA linked lists */
     unsigned short w;     /* predefined value in [0, 9L-1]
                              (used by the momentum election) */
+    unsigned char active; /* 1 if on pulsating shell */
+    unsigned char spin;   /* 1 if on the spiral arm */
 } Cell;
 
 /* --- Spiral point storage (for walker + rendering) --- */

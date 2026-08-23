@@ -52,15 +52,12 @@ static int climb_total;                /* |ax|+|ay|+|az| (DDA period)  */
 static int orbit_total;                /* CYL_CIRC                     */
 static int period_total;               /* climb + orbit (Bresenham)    */
 
-/* ---- Frontier BFS buffers (packed x<<16 | y<<8 | z) ---- */
-#define R2_MAX (3 * MID * MID)
-static unsigned int front[L * L * L];
-static unsigned int next[L * L * L];
-static int front_n = 0;
+/* ---- Frontier BFS (links live inside grid_next[].link) ---- */
+static int front_head = -1;            /* packed coords of first cell    */
 
 /* ---- r2 buckets for O(active-shell) updates ---- */
+#define R2_MAX (3 * MID * MID)
 static int ring_head[R2_MAX + 1];
-static int ring_next[L * L * L];
 static int prev_kmin = 1, prev_kmax = 0;
 
 /* ---- runtime walker state (integers only) ---- */
@@ -175,12 +172,14 @@ void init(void) {
         Cell *c  = &grid[x][y][z];
         c->r     = 0;
         c->r2    = INF_R2;
+        c->link  = -1;
         c->active = 0;
         c->spin  = 0;
 
         Cell *cn  = &grid_next[x][y][z];
         cn->r     = 0;
         cn->r2    = INF_R2;
+        cn->link  = -1;
         cn->active = 0;
         cn->spin  = 0;
     }
@@ -189,18 +188,15 @@ void init(void) {
     grid[MID][MID][MID].r2 = 0;
     grid[MID][MID][MID].r  = 0;
 
-    /* start wavefront BFS from the centre */
-    front[0] = ((unsigned)MID << 16) | ((unsigned)MID << 8) | (unsigned)MID;
-    front_n  = 1;
+    /* start wavefront BFS from the centre (links live in grid_next[].link) */
+    front_head = ((unsigned)MID << 16) | ((unsigned)MID << 8) | (unsigned)MID;
+    grid_next[MID][MID][MID].link = -1;
 
-    /* r2 buckets: the centre has r2 = 0 */
+    /* r2 buckets: the centre has r2 = 0 (links live in grid[].link) */
     memset(ring_head, -1, sizeof(ring_head));
-    {
-        Cell *base = &grid[0][0][0];
-        int centre_idx = (int)(&grid[MID][MID][MID] - base);
-        ring_next[centre_idx] = -1;
-        ring_head[0] = centre_idx;
-    }
+    grid[MID][MID][MID].link = -1;
+    ring_head[0] = front_head;
+
     prev_kmin = 1; prev_kmax = 0;
 
     /* init walker */
@@ -277,7 +273,7 @@ static const int ddy[6] = {0,  0, 1, -1, 0,  0};
 static const int ddz[6] = {0,  0, 0,  0, 1, -1};
 
 static void pulse_update_wavefront(void) {
-    if (front_n == 0) return;                  /* wavefront has saturated */
+    if (front_head == -1) return;              /* wavefront has saturated */
 
     /* snapshot only the r2 field into grid_next */
     Cell *g = &grid[0][0][0];
@@ -285,12 +281,11 @@ static void pulse_update_wavefront(void) {
     for (int idx = 0; idx < L * L * L; idx++)
         h[idx].r2 = g[idx].r2;
 
-    int next_n = 0;
-    for (int i = 0; i < front_n; i++) {
-        unsigned int p = front[i];
-        int x = (int)(p >> 16);
-        int y = (int)((p >> 8) & 0xFF);
-        int z = (int)(p & 0xFF);
+    int new_front_head = -1;
+    for (int p = front_head; p != -1; p = grid_next[p >> 16][(p >> 8) & 0xFF][p & 0xFF].link) {
+        int x = p >> 16;
+        int y = (p >> 8) & 0xFF;
+        int z = p & 0xFF;
 
         if (grid[x][y][z].r2 == INF_R2) continue;
 
@@ -315,17 +310,19 @@ static void pulse_update_wavefront(void) {
             else            diff = (az << 1) + 1;
 
             unsigned int new_r2 = grid[x][y][z].r2 + diff;
-            if (new_r2 < grid_next[nx][ny][nz].r2) {
-                grid_next[nx][ny][nz].r2 = new_r2;
-                next[next_n++] =
-                    ((unsigned int)nx << 16) |
-                    ((unsigned int)ny << 8)  |
-                    (unsigned int)nz;
+            Cell *nc = &grid_next[nx][ny][nz];
+            if (new_r2 < nc->r2) {
+                int newly = (nc->r2 == INF_R2);
+                nc->r2 = new_r2;
+                if (newly) {
+                    int packed = (nx << 16) | (ny << 8) | nz;
+                    nc->link = new_front_head;
+                    new_front_head = packed;
+                }
             }
         }
     }
-    memcpy(front, next, sizeof(unsigned int) * next_n);
-    front_n = next_n;
+    front_head = new_front_head;
 }
 
 /* ==========================================================
@@ -335,14 +332,11 @@ void pulse_step(void) {
     pulse_update_wavefront();
     grid_next[MID][MID][MID].r2 = 0;
 
-    Cell *base = &grid[0][0][0];
-
     /* copy-back the frontier cells and bucket newly reached ones by r2 */
-    for (int i = 0; i < front_n; i++) {
-        unsigned int p = front[i];
-        int x = (int)(p >> 16);
-        int y = (int)((p >> 8) & 0xFF);
-        int z = (int)(p & 0xFF);
+    for (int p = front_head; p != -1; p = grid_next[p >> 16][(p >> 8) & 0xFF][p & 0xFF].link) {
+        int x = p >> 16;
+        int y = (p >> 8) & 0xFF;
+        int z = p & 0xFF;
 
         Cell *c = &grid[x][y][z];
         unsigned int old_r2 = c->r2;
@@ -350,9 +344,8 @@ void pulse_step(void) {
         c->r2 = new_r2;
         if (new_r2 != INF_R2 && old_r2 == INF_R2) {
             c->r = isqrt((int)new_r2);
-            int idx = (int)(c - base);
-            ring_next[idx] = ring_head[(int)new_r2];
-            ring_head[(int)new_r2] = idx;
+            c->link = ring_head[(int)new_r2];
+            ring_head[(int)new_r2] = p;
         }
     }
 
@@ -363,12 +356,12 @@ void pulse_step(void) {
     if (kmax > R2_MAX) kmax = R2_MAX;
 
     for (int k = prev_kmin; k <= prev_kmax; k++) {
-        for (int idx = ring_head[k]; idx != -1; idx = ring_next[idx])
-            base[idx].active = 0;
+        for (int p = ring_head[k]; p != -1; p = grid[p >> 16][(p >> 8) & 0xFF][p & 0xFF].link)
+            grid[p >> 16][(p >> 8) & 0xFF][p & 0xFF].active = 0;
     }
     for (int k = kmin; k <= kmax; k++) {
-        for (int idx = ring_head[k]; idx != -1; idx = ring_next[idx])
-            base[idx].active = 1;
+        for (int p = ring_head[k]; p != -1; p = grid[p >> 16][(p >> 8) & 0xFF][p & 0xFF].link)
+            grid[p >> 16][(p >> 8) & 0xFF][p & 0xFF].active = 1;
     }
     prev_kmin = kmin; prev_kmax = kmax;
 }
