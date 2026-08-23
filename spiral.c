@@ -52,14 +52,6 @@ static int climb_total;                /* |ax|+|ay|+|az| (DDA period)  */
 static int orbit_total;                /* CYL_CIRC                     */
 static int period_total;               /* climb + orbit (Bresenham)    */
 
-/* ---- Frontier BFS (links live inside grid_next[].link) ---- */
-static int front_head = -1;            /* packed coords of first cell    */
-
-/* ---- r2 buckets for O(active-shell) updates ---- */
-#define R2_MAX (3 * MID * MID)
-static int ring_head[R2_MAX + 1];
-static int prev_kmin = 1, prev_kmax = 0;
-
 /* ---- runtime walker state (integers only) ---- */
 static int tip_x, tip_y, tip_z;        /* lattice position             */
 static int vx, vy, vz;                 /* offset from lattice centre   */
@@ -172,14 +164,12 @@ void init(void) {
         Cell *c  = &grid[x][y][z];
         c->r     = 0;
         c->r2    = INF_R2;
-        c->link  = -1;
         c->active = 0;
         c->spin  = 0;
 
         Cell *cn  = &grid_next[x][y][z];
         cn->r     = 0;
         cn->r2    = INF_R2;
-        cn->link  = -1;
         cn->active = 0;
         cn->spin  = 0;
     }
@@ -187,17 +177,6 @@ void init(void) {
     /* seed center */
     grid[MID][MID][MID].r2 = 0;
     grid[MID][MID][MID].r  = 0;
-
-    /* start wavefront BFS from the centre (links live in grid_next[].link) */
-    front_head = ((unsigned)MID << 16) | ((unsigned)MID << 8) | (unsigned)MID;
-    grid_next[MID][MID][MID].link = -1;
-
-    /* r2 buckets: the centre has r2 = 0 (links live in grid[].link) */
-    memset(ring_head, -1, sizeof(ring_head));
-    grid[MID][MID][MID].link = -1;
-    ring_head[0] = front_head;
-
-    prev_kmin = 1; prev_kmax = 0;
 
     /* init walker */
     spiral_init();
@@ -272,29 +251,15 @@ static const int ddx[6] = {1, -1, 0,  0, 0,  0};
 static const int ddy[6] = {0,  0, 1, -1, 0,  0};
 static const int ddz[6] = {0,  0, 0,  0, 1, -1};
 
+/* ==========================================================
+ * Pure CA pulse update: each cell computes its next r2 from the
+ * minimum among itself and its 6 neighbours (sum-of-odds).
+ * ========================================================== */
 static void pulse_update_wavefront(void) {
-    if (front_head == -1) return;              /* wavefront has saturated */
-
-    /* snapshot only the r2 field into grid_next */
-    Cell *g = &grid[0][0][0];
-    Cell *h = &grid_next[0][0][0];
-    for (int idx = 0; idx < L * L * L; idx++)
-        h[idx].r2 = g[idx].r2;
-
-    int new_front_head = -1;
-    for (int p = front_head; p != -1; p = grid_next[p >> 16][(p >> 8) & 0xFF][p & 0xFF].link) {
-        int x = p >> 16;
-        int y = (p >> 8) & 0xFF;
-        int z = p & 0xFF;
-
-        if (grid[x][y][z].r2 == INF_R2) continue;
-
-        unsigned int ax = (x > MID) ? (unsigned int)(x - MID)
-                                     : (unsigned int)(MID - x);
-        unsigned int ay = (y > MID) ? (unsigned int)(y - MID)
-                                     : (unsigned int)(MID - y);
-        unsigned int az = (z > MID) ? (unsigned int)(z - MID)
-                                     : (unsigned int)(MID - z);
+    for (int x = 0; x < L; x++)
+    for (int y = 0; y < L; y++)
+    for (int z = 0; z < L; z++) {
+        unsigned int best = grid[x][y][z].r2;
 
         for (int d = 0; d < 6; d++) {
             int nx = x + ddx[d];
@@ -304,66 +269,56 @@ static void pulse_update_wavefront(void) {
                 nz < 0 || nz >= L)
                 continue;
 
-            unsigned int diff;
-            if (d < 2)      diff = (ax << 1) + 1;
-            else if (d < 4) diff = (ay << 1) + 1;
-            else            diff = (az << 1) + 1;
+            unsigned int nr2 = grid[nx][ny][nz].r2;
+            if (nr2 == INF_R2) continue;
 
-            unsigned int new_r2 = grid[x][y][z].r2 + diff;
-            Cell *nc = &grid_next[nx][ny][nz];
-            if (new_r2 < nc->r2) {
-                int newly = (nc->r2 == INF_R2);
-                nc->r2 = new_r2;
-                if (newly) {
-                    int packed = (nx << 16) | (ny << 8) | nz;
-                    nc->link = new_front_head;
-                    new_front_head = packed;
-                }
+            unsigned int diff;
+            if (nx != x) {
+                diff = (unsigned int)((nx > MID) ? (nx - MID) : (MID - nx));
+                diff = (diff << 1) + 1;
+            } else if (ny != y) {
+                diff = (unsigned int)((ny > MID) ? (ny - MID) : (MID - ny));
+                diff = (diff << 1) + 1;
+            } else {
+                diff = (unsigned int)((nz > MID) ? (nz - MID) : (MID - nz));
+                diff = (diff << 1) + 1;
             }
+
+            unsigned int cand = nr2 + diff;
+            if (cand < best) best = cand;
         }
+
+        grid_next[x][y][z].r2 = best;
+        grid_next[x][y][z].r  = (best != INF_R2) ? isqrt((int)best) : 0;
     }
-    front_head = new_front_head;
+
+    grid_next[MID][MID][MID].r2 = 0;
+    grid_next[MID][MID][MID].r  = 0;
 }
 
 /* ==========================================================
- * pulse_step — BFS + copy-back + activation flags
+ * pulse_step — synchronous CA update + active shell
  * ========================================================== */
 void pulse_step(void) {
     pulse_update_wavefront();
-    grid_next[MID][MID][MID].r2 = 0;
 
-    /* copy-back the frontier cells and bucket newly reached ones by r2 */
-    for (int p = front_head; p != -1; p = grid_next[p >> 16][(p >> 8) & 0xFF][p & 0xFF].link) {
-        int x = p >> 16;
-        int y = (p >> 8) & 0xFF;
-        int z = p & 0xFF;
+    unsigned int pulse_r2 = pulse_from_time((unsigned int)tick);
 
-        Cell *c = &grid[x][y][z];
-        unsigned int old_r2 = c->r2;
-        unsigned int new_r2 = grid_next[x][y][z].r2;
-        c->r2 = new_r2;
-        if (new_r2 != INF_R2 && old_r2 == INF_R2) {
-            c->r = isqrt((int)new_r2);
-            c->link = ring_head[(int)new_r2];
-            ring_head[(int)new_r2] = p;
+    for (int x = 0; x < L; x++)
+    for (int y = 0; y < L; y++)
+    for (int z = 0; z < L; z++) {
+        unsigned int r2 = grid_next[x][y][z].r2;
+        grid[x][y][z].r2 = r2;
+        grid[x][y][z].r  = grid_next[x][y][z].r;
+
+        if (r2 == INF_R2) {
+            grid[x][y][z].active = 0;
+        } else {
+            unsigned int delta = (r2 > pulse_r2) ? (r2 - pulse_r2)
+                                               : (pulse_r2 - r2);
+            grid[x][y][z].active = (delta <= PULSE_TOLERANCE) ? 1 : 0;
         }
     }
-
-    /* update only the active shell around pulse_r2 (O(active cells)) */
-    unsigned int pulse_r2 = pulse_from_time((unsigned int)tick);
-    int kmin = (pulse_r2 > 0) ? (int)(pulse_r2 - 1) : 0;
-    int kmax = (int)(pulse_r2 + 1);
-    if (kmax > R2_MAX) kmax = R2_MAX;
-
-    for (int k = prev_kmin; k <= prev_kmax; k++) {
-        for (int p = ring_head[k]; p != -1; p = grid[p >> 16][(p >> 8) & 0xFF][p & 0xFF].link)
-            grid[p >> 16][(p >> 8) & 0xFF][p & 0xFF].active = 0;
-    }
-    for (int k = kmin; k <= kmax; k++) {
-        for (int p = ring_head[k]; p != -1; p = grid[p >> 16][(p >> 8) & 0xFF][p & 0xFF].link)
-            grid[p >> 16][(p >> 8) & 0xFF][p & 0xFF].active = 1;
-    }
-    prev_kmin = kmin; prev_kmax = kmax;
 }
 
 /* ==========================================================
